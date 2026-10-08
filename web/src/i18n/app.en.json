@@ -118,7 +118,7 @@
   "ui.buildOrder.findDisabledCompare": "Unavailable while comparing builds.",
   "ui.buildOrder.findDisabledPreviewing": "Apply or dismiss the suggestion below.",
   "ui.buildOrder.findSuggested": "Suggested support: +{added} points, peak {peak} of {cap}.",
-  "ui.buildOrder.findBestFound": "Best found: the search limit was reached before the cheapest build was proven.",
+  "ui.buildOrder.findBestFound": "Best found: a cheaper supporting build may exist.",
   "ui.buildOrder.findFinishPartial": "Finish {name}",
   "ui.buildOrder.findTagged": "Added stars carrying your tagged attributes: {count}.",
   "ui.buildOrder.findApply": "Apply",

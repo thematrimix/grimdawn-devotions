@@ -218,6 +218,11 @@ export function findSupport(
     nodeCap = TIE_NODE_CAP;
     const seen = new Set<string>();
     search(true, (c) => {
+      // Only a capped phase 1 can leave a cheaper build for this pass to meet: it becomes the cost.
+      if (c.added < limit) {
+        limit = c.added;
+        ties = [];
+      }
       if (c.added !== limit || seen.has(c.key)) return;
       seen.add(c.key);
       ties.push(c);
