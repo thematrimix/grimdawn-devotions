@@ -4,7 +4,9 @@
 import { test, expect } from "bun:test";
 import doc from "../../data/devotions.json";
 import { buildModel } from "../src/core/model";
-import { buildOrderHtml } from "../src/adapters/buildOrderView";
+import { buildOrderHtml, findPreviewHtml } from "../src/adapters/buildOrderView";
+import { buildCoverTable, buildReachCons } from "../src/core/reachability";
+import { findBuild, type FindPlan } from "../src/core/findBuild";
 import { affinityColor } from "../src/adapters/affinityColors";
 import type { BuildStep } from "../src/core/reachability";
 import { enLoc } from "./helpers/localizeEn";
@@ -83,4 +85,60 @@ test("buildOrderHtml marks a complete step smaller than its constellation as a p
   // A full-size step carries no partial marker.
   const full = buildOrderHtml(enLoc, model, null, [{ kind: "complete", conId: con.id, points: size, heldAfter: size }]);
   expect(full).not.toContain("bo-partial");
+});
+
+const rcons = buildReachCons(model);
+const rtable = buildCoverTable(rcons);
+const oleron = new Set(model.constellations.get("oleron")!.starIds);
+
+test("buildOrderHtml shows the mode selector and an enabled Find on any non-empty capped selection", () => {
+  const html = buildOrderHtml(enLoc, model, null, [], null, { enabled: true, mode: "fill" });
+  expect(html).toContain('class="bo-find-mode"');
+  expect(html).toContain('<option value="fill" selected>');
+  expect(html).toMatch(/<button type="button" class="bo-find" [^>]*>Find<\/button>/);
+  expect(html).not.toMatch(/class="bo-find"[^>]*disabled/);
+});
+
+test("findPreviewHtml lists adds, the summary and the order, with Apply enabled", () => {
+  const out = findBuild(model, rcons, rtable, oleron, 55, [], "cheapest") as FindPlan;
+  const html = findPreviewHtml(enLoc, model, null, out, oleron, 55, "cheapest", false);
+  expect(html).toContain("bo-find-adds");
+  expect(html).toContain(`+${out.addedStars}`);
+  expect(html).not.toContain("bo-find-removes");
+  expect(html).toMatch(/<button type="button" class="bo-find-apply">/);
+  expect(html).toContain("bo-list");
+});
+
+test("findPreviewHtml lists removed suggestions when the plan swaps them out", () => {
+  const out = findBuild(model, rcons, rtable, oleron, 55, [], "cheapest") as FindPlan;
+  // An earlier suggestion the plan no longer uses: a crossroads that is not in the plan.
+  const extra = [
+    "crossroads_chaos",
+    "crossroads_order",
+    "crossroads_primordial",
+    "crossroads_eldritch",
+    "crossroads_ascendant",
+  ]
+    .map((id) => model.constellations.get(id)!.starIds[0]!)
+    .find((s) => !out.stars.has(s))!;
+  const html = findPreviewHtml(enLoc, model, null, out, new Set([...out.stars, extra]), 55, "cheapest", false);
+  expect(html).toContain("bo-find-removes");
+  expect(html).not.toContain("bo-find-optimal");
+});
+
+test("findPreviewHtml says already optimal and disables Apply when nothing changes", () => {
+  const out = findBuild(model, rcons, rtable, oleron, 55, [], "cheapest") as FindPlan;
+  const html = findPreviewHtml(enLoc, model, null, out, new Set(out.stars), 55, "cheapest", false);
+  expect(html).toContain("bo-find-optimal");
+  expect(html).toMatch(/class="bo-find-apply" disabled/);
+});
+
+test("findPreviewHtml uses the attributes-specific best-found note", () => {
+  const out = { ...(findBuild(model, rcons, rtable, oleron, 55, [], "cheapest") as FindPlan), exhaustive: false };
+  expect(findPreviewHtml(enLoc, model, null, out, oleron, 55, "attributes", true)).toContain(
+    enLoc.translate("ui.buildOrder.findBestFoundAttributes"),
+  );
+  expect(findPreviewHtml(enLoc, model, null, out, oleron, 55, "cheapest", true)).toContain(
+    enLoc.translate("ui.buildOrder.findBestFound"),
+  );
 });

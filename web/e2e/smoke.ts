@@ -952,18 +952,44 @@ try {
   );
   check(!(await cdp.evaluate<string>("location.hash")).includes("fd="), "Apply clears the preview flag");
   check(
-    await cdp.evaluate<boolean>("document.querySelector('.bo-find').disabled"),
-    "Find is disabled once the build covers its own affinity",
+    !(await cdp.evaluate<boolean>("document.querySelector('.bo-find').disabled")),
+    "Find stays usable on a complete build",
   );
-  await cdp.evaluate("history.back()");
-  check(await waitFor("!!document.querySelector('.bo-find-apply')"), "Back after Apply returns to the preview");
+  check((await cdp.evaluate<string>("location.hash")).includes("fc="), "Apply records the core (fc=)");
+  await cdp.evaluate("document.querySelector('.bo-find').click()");
+  check(
+    await waitFor("!!document.querySelector('.bo-find-optimal')"),
+    "Find right after Apply says the build is already optimal",
+  );
+  // Switch to Most attributes with the preview open: it recomputes in place and the mode rides in the URL.
+  await cdp.evaluate(
+    `(() => { const s = document.querySelector('.bo-find-mode'); s.value = 'attributes'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`,
+  );
+  check(
+    await waitFor("location.hash.includes('fm=2') && !!document.querySelector('.bo-find-box')"),
+    "changing the mode with the preview open recomputes it (fm=2)",
+  );
+  check(
+    await waitFor("!!document.querySelector('.bo-find-adds') || !!document.querySelector('.bo-find-optimal')"),
+    "the attributes preview lists adds or says optimal",
+  );
+  const modeHash = await cdp.evaluate<string>("location.hash");
+  await cdp.evaluate(`location.hash = "p=55"`);
+  await waitFor("!document.querySelector('.bo-find-box')");
+  await cdp.evaluate(`location.hash = "${modeHash.slice(1)}"`);
+  check(
+    await waitFor(
+      "!!document.querySelector('.bo-find-box') && document.querySelector('.bo-find-mode').value === 'attributes'",
+    ),
+    "a link restores the mode, the core and the open preview",
+  );
   await cdp.evaluate("document.querySelector('.bo-find-dismiss').click()");
   check(
-    await waitFor("!document.querySelector('.bo-find-apply') && !location.hash.includes('fd=')"),
+    await waitFor("!document.querySelector('.bo-find-box') && !location.hash.includes('fd=')"),
     "Dismiss drops the preview and its flag",
   );
   check(
-    (await cdp.evaluate<string>("document.getElementById('point-bar').textContent")).includes("7 used"),
+    (await cdp.evaluate<string>("document.getElementById('point-bar').textContent")).includes("31 used"),
     "Dismiss leaves the selection unchanged",
   );
   check(cdp.consoleErrors.length === 0, `no console errors after the Find checks (got ${cdp.consoleErrors.length})`);

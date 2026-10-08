@@ -21,7 +21,8 @@ import {
   type FindButton,
   type NoOrderInfo,
 } from "../adapters/buildOrderView";
-import { findSupport, type FindResult } from "../core/supportFinder";
+import { findBuild, type FindOutcome } from "../core/findBuild";
+import { reconcileCore } from "../core/findCore";
 import type { StepState } from "../core/orderLegality";
 import { tooltipView, escapeHtml, type DimInfo } from "../adapters/tooltipView";
 import { affinityDeficits, dimReport, membersNeedingScaffold, type DimReport } from "../core/dimReasons";
@@ -77,7 +78,7 @@ import {
   availablePowers,
 } from "../core/aggregate";
 import { condensedRows } from "../core/statFormat";
-import type { Affinity, SelectionState, StarId } from "../core/types";
+import type { Affinity, FindMode, SelectionState, StarId } from "../core/types";
 
 const GITHUB_URL = "https://github.com/tednaleid/grimdawn-devotions";
 const STEAMDB_PATCHNOTES_URL = "https://steamdb.info/patchnotes/"; // per-build page: <base><buildid>/
@@ -144,13 +145,18 @@ async function boot() {
   // keeps it; read once in the background at load for its title (see ensureSourceRead), never
   // applied back to the selection.
   let source = "";
-  // Find's preview. findFor is the selection|cap it was asked for (null: no preview); any change to
-  // either drops it, while a tag change recomputes it (tags only steer the tie-break). pendingFind asks
-  // the next refresh to open it once the cap has settled (a Find click, or fd=1 in a restored link).
-  let findFor: string | null = null;
+  // Find. findOpen: the preview is showing (fd=1); it stays open across changes and recomputes. findCore:
+  // the user's own picks when Find's suggestions are part of the selection (null = core is the selection),
+  // carried across clicks by reconcileCore against coreBase (the selection it was last reconciled with) and
+  // reset by wholesale replacements. findMode: what Find optimizes (fm=). pendingFind asks the next refresh
+  // to open the preview once the cap has settled (a Find click, or fd=1 in a restored link).
+  let findOpen = false;
   let pendingFind = false;
-  let findMemo: { key: string; result: FindResult } | null = null;
-  let curFind: FindResult | null = null;
+  let findCore: Set<StarId> | null = null;
+  let coreBase = new Set<StarId>();
+  let findMode: FindMode = "cheapest";
+  let findMemo: { key: string; result: FindOutcome } | null = null;
+  let curFind: FindOutcome | null = null;
   // Decode and repair a hash into planner state. Runs at boot and on every hashchange
   // (Back/Forward, bookmark clicks, hand-edited URLs); an undecodable hash is the empty build.
   function applyHash(hash: string): void {
@@ -170,8 +176,11 @@ async function boot() {
     for (const b of restored?.benefits ?? []) selectedBenefits.add(b);
     query = restored?.query ?? "";
     source = restored?.source ?? "";
-    findFor = null;
+    findOpen = false;
     pendingFind = restored?.find ?? false;
+    findCore = restored?.findCore ?? null;
+    coreBase = new Set(state.selected);
+    findMode = restored?.findMode ?? "cheapest";
   }
   applyHash(location.hash);
   // The full benefit catalog (every subject + its stat ids), so the panel can list benefits the
@@ -547,6 +556,7 @@ async function boot() {
       // Revert: discard the live edits, restore the baseline snapshot, and exit compare.
       state = { selected: new Set(baseline.selected), pointCap: baseline.pointCap };
       baseline = null;
+      findCore = null;
       refresh();
       return;
     }
@@ -562,6 +572,7 @@ async function boot() {
       const live = state;
       state = { selected: new Set(baseline.selected), pointCap: baseline.pointCap };
       baseline = { selected: new Set(live.selected), pointCap: live.pointCap };
+      findCore = null;
       refresh();
       return;
     }
@@ -593,6 +604,7 @@ async function boot() {
   mapContainer.addEventListener("click", h.onClickCapture, true);
   resetPointsBtn.addEventListener("click", () => {
     state = { selected: new Set(), pointCap: state.pointCap };
+    findCore = null;
     refresh();
   });
 
@@ -816,26 +828,46 @@ async function boot() {
         }, 0),
       );
     });
+    wireFindMode(panel);
   }
-  // Find's preview in place of the order. Apply makes the suggestion the selection (one history entry,
-  // so Back undoes it); Dismiss drops the preview.
-  function paintFind(result: FindResult) {
+  // Switching the mode recomputes (and, with the preview open, re-previews) through refresh.
+  function wireFindMode(panel: HTMLElement) {
+    panel.querySelector<HTMLSelectElement>(".bo-find-mode")?.addEventListener("change", (e) => {
+      findMode = (e.currentTarget as HTMLSelectElement).value as FindMode;
+      refresh();
+    });
+  }
+  // Find's preview in place of the order. Apply makes the suggestion the selection (one history entry, so
+  // Back undoes it) and records the core it kept, so a later Find can swap these suggestions out.
+  function paintFind(result: FindOutcome) {
     hideBoPop();
     const panel = boPanel();
     const tagsActive = [...selectedBenefits].some((t) => {
       const tag = parseTag(t);
       return !!tag && tag.kind !== "affinity";
     });
-    panel.innerHTML = findPreviewHtml(localization, model, data.manifest, result, state.pointCap, tagsActive);
+    panel.innerHTML = findPreviewHtml(
+      localization,
+      model,
+      data.manifest,
+      result,
+      state.selected,
+      state.pointCap,
+      findMode,
+      tagsActive,
+    );
     wireBoRows(panel);
-    panel.querySelector(".bo-find-apply")?.addEventListener("click", () => {
+    wireFindMode(panel);
+    panel.querySelector(".bo-find-apply:not(:disabled)")?.addEventListener("click", () => {
       if (curFind?.kind !== "found") return;
       state = { selected: new Set(curFind.stars), pointCap: state.pointCap };
-      findFor = null;
+      findCore = curFind.core.size < curFind.stars.size ? new Set(curFind.core) : null;
+      coreBase = new Set(curFind.stars);
+      findOpen = false;
       refresh();
     });
     panel.querySelector(".bo-find-dismiss")?.addEventListener("click", () => {
-      findFor = null;
+      findOpen = false;
       refresh();
     });
   }
@@ -900,7 +932,7 @@ async function boot() {
   }
   // The hash, written by both render paths. Search uses "replace" so typing never floods history.
   function writeHash(urlMode: "push" | "replace") {
-    const next = `#${encodeHash(state.selected, state.pointCap, canonical, selectedBenefits, benefitCanonical, baseline, query, source, findFor !== null)}`;
+    const next = `#${encodeHash(state.selected, state.pointCap, canonical, selectedBenefits, benefitCanonical, baseline, query, source, findOpen, findCore, findMode)}`;
     // Only touch history when the hash actually changed: no-op refreshes (language switch,
     // popover re-renders) must create no entry and leave the current one alone.
     if (next === location.hash) return;
@@ -908,6 +940,9 @@ async function boot() {
     else history.replaceState(null, "", next);
   }
   function refresh(urlMode: "push" | "replace" = "push") {
+    // Clicks join or leave the core; Find's own suggestions stay outside it (see core/findCore.ts).
+    findCore = reconcileCore(findCore, coreBase, state.selected);
+    coreBase = new Set(state.selected);
     dimCache.clear();
     recomputeSearch();
     // The full per-click engine cost (validity floor + dimming sweep) is the core selectionView port;
@@ -988,30 +1023,27 @@ async function boot() {
         boInfo = { kind: "empty" };
       }
     }
-    // Find is offered only for an incomplete selection under a finite cap, outside compare mode.
+    // Find is usable on any non-empty selection under a finite cap, outside compare mode.
     const capped = !!table && Number.isFinite(state.pointCap);
     const findBtn: FindButton = baseline
-      ? { enabled: false, reason: "compare" }
+      ? { enabled: false, reason: "compare", mode: findMode }
       : !capped
-        ? { enabled: false, reason: "uncapped" }
+        ? { enabled: false, reason: "uncapped", mode: findMode }
         : state.selected.size === 0
-          ? { enabled: false, reason: "empty" }
-          : boInfo?.kind === "incomplete"
-            ? { enabled: true }
-            : { enabled: false, reason: "complete" };
-    const findKey = `${selectionKey(state.selected)}|${state.pointCap}`;
+          ? { enabled: false, reason: "empty", mode: findMode }
+          : { enabled: true, mode: findMode };
     if (pendingFind) {
       pendingFind = false;
-      if (findBtn.enabled) findFor = findKey;
+      if (findBtn.enabled) findOpen = true;
     }
-    // A stale preview (the selection or cap moved, or Find no longer applies) is dropped, never shown.
-    if (findFor !== null && (findFor !== findKey || !findBtn.enabled)) findFor = null;
+    if (!findBtn.enabled) findOpen = false;
     curFind = null;
-    if (findFor !== null && table) {
+    if (findOpen && table) {
+      const core = findCore ?? state.selected;
       const tags = [...selectedBenefits].sort();
-      const memoKey = `${findKey}|${tags.join(",")}`;
+      const memoKey = `${selectionKey(core)}|${state.pointCap}|${tags.join(",")}|${findMode}`;
       if (findMemo?.key !== memoKey)
-        findMemo = { key: memoKey, result: findSupport(model, cons, table, state.selected, state.pointCap, tags) };
+        findMemo = { key: memoKey, result: findBuild(model, cons, table, core, state.pointCap, tags, findMode) };
       curFind = findMemo.result;
     }
     if (curTransition) paintTransition(curTransition);
@@ -1214,6 +1246,7 @@ async function boot() {
     state = { selected: repairSelection(model, cons, table, wanted, cap), pointCap: cap };
     const pruned = wanted.size - state.selected.size;
     source = slug;
+    findCore = null;
     importOwnsPanel = false;
     importPanel.setState({ kind: "done", slug, pruned, title: body.title });
     // A full refresh, not repaint(): the import replaces state.selected/pointCap wholesale, so
@@ -1349,6 +1382,7 @@ async function boot() {
     state = { selected: repairSelection(model, cons, table, wanted, cap), pointCap: cap };
     // The selection is the character's own, so any grimtools association the hash carried is stale.
     source = "";
+    findCore = null;
     savePanel.setState({
       kind: "done",
       name: character.name,

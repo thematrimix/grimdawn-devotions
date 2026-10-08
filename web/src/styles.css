@@ -1177,6 +1177,29 @@ body.comparing main {
   gap: 6px;
   margin-top: 6px;
 }
+.bo-find-ctl {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+}
+.bo-find-mode {
+  background: #1b2531;
+  border: 1px solid #283446;
+  border-radius: 4px;
+  color: #d7c89a;
+  font-size: 0.68rem;
+}
+.bo-find-sub {
+  margin-top: 4px;
+  opacity: 0.7;
+}
+.bo-find-optimal {
+  margin-top: 4px;
+}
+.bo-find-apply:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .bo-compare-head,
 .bo-note {
   margin: 2px 0 6px;
