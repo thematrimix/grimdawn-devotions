@@ -13,7 +13,15 @@ import type { InfoPopoverText } from "../adapters/infoPopover";
 import { type StarMark, mountSvg } from "../adapters/svgRenderer";
 import { attachNav, navHandlers } from "../adapters/navController";
 import { renderBenefits, renderAffinities, powersListHtml } from "../adapters/sidebarView";
-import { buildOrderHtml, transitionHtml, buildStepPopupHtml, type NoOrderInfo } from "../adapters/buildOrderView";
+import {
+  buildOrderHtml,
+  transitionHtml,
+  buildStepPopupHtml,
+  findPreviewHtml,
+  type FindButton,
+  type NoOrderInfo,
+} from "../adapters/buildOrderView";
+import { findSupport, type FindResult } from "../core/supportFinder";
 import type { StepState } from "../core/orderLegality";
 import { tooltipView, escapeHtml, type DimInfo } from "../adapters/tooltipView";
 import { affinityDeficits, dimReport, membersNeedingScaffold, type DimReport } from "../core/dimReasons";
@@ -136,6 +144,13 @@ async function boot() {
   // keeps it; read once in the background at load for its title (see ensureSourceRead), never
   // applied back to the selection.
   let source = "";
+  // Find's preview. findFor is the selection|cap it was asked for (null: no preview); any change to
+  // either drops it, while a tag change recomputes it (tags only steer the tie-break). pendingFind asks
+  // the next refresh to open it once the cap has settled (a Find click, or fd=1 in a restored link).
+  let findFor: string | null = null;
+  let pendingFind = false;
+  let findMemo: { key: string; result: FindResult } | null = null;
+  let curFind: FindResult | null = null;
   // Decode and repair a hash into planner state. Runs at boot and on every hashchange
   // (Back/Forward, bookmark clicks, hand-edited URLs); an undecodable hash is the empty build.
   function applyHash(hash: string): void {
@@ -155,6 +170,8 @@ async function boot() {
     for (const b of restored?.benefits ?? []) selectedBenefits.add(b);
     query = restored?.query ?? "";
     source = restored?.source ?? "";
+    findFor = null;
+    pendingFind = restored?.find ?? false;
   }
   applyHash(location.hash);
   // The full benefit catalog (every subject + its stat ids), so the panel can list benefits the
@@ -729,8 +746,9 @@ async function boot() {
     const i = Number(row.dataset.stepI ?? -1);
     // The popup's data source is whichever panel is showing: the transition pair when comparing,
     // else the from-scratch build order.
-    const steps = curTransition ? curTransition.steps : curBuildOrder;
-    const states = curTransition ? curTransition.states : curBuildOrderStates;
+    const found = curFind?.kind === "found" ? curFind : null;
+    const steps = curTransition ? curTransition.steps : found ? found.order : curBuildOrder;
+    const states = curTransition ? curTransition.states : found ? found.states : curBuildOrderStates;
     if (!steps || !states || !Number.isInteger(i) || i < 0 || i >= states.length) return;
     const el = boPopEl();
     el.innerHTML = buildStepPopupHtml(localization, model, steps[i]!, states[i]!);
@@ -775,7 +793,7 @@ async function boot() {
   }
   // Re-render only the Benefits panel (used by benefit-tag clicks, which do not
   // change the star selection so nothing flashes).
-  function paintBuildOrder(steps: BuildStep[] | null, noOrder?: NoOrderInfo | null) {
+  function paintBuildOrder(steps: BuildStep[] | null, noOrder: NoOrderInfo | null, find: FindButton) {
     hideBoPop();
     const panel = boPanel();
     // Comparing but no verified transition order (the none pair): the from-scratch panel still
@@ -784,8 +802,42 @@ async function boot() {
       baseline !== null && baseline.selected.size > 0
         ? `<div class="bo-note">${localization.translate("ui.buildOrder.transitionUnavailable")}</div>`
         : "";
-    panel.innerHTML = note + buildOrderHtml(localization, model, data.manifest, steps, noOrder);
+    panel.innerHTML = note + buildOrderHtml(localization, model, data.manifest, steps, noOrder, find);
     wireBoRows(panel);
+    panel.querySelector<HTMLButtonElement>(".bo-find:not(:disabled)")?.addEventListener("click", (e) => {
+      const btn = e.currentTarget as HTMLButtonElement;
+      btn.disabled = true;
+      btn.textContent = localization.translate("ui.buildOrder.findSearching");
+      // Let the searching state paint before the synchronous search runs inside refresh().
+      requestAnimationFrame(() =>
+        setTimeout(() => {
+          pendingFind = true;
+          refresh();
+        }, 0),
+      );
+    });
+  }
+  // Find's preview in place of the order. Apply makes the suggestion the selection (one history entry,
+  // so Back undoes it); Dismiss drops the preview.
+  function paintFind(result: FindResult) {
+    hideBoPop();
+    const panel = boPanel();
+    const tagsActive = [...selectedBenefits].some((t) => {
+      const tag = parseTag(t);
+      return !!tag && tag.kind !== "affinity";
+    });
+    panel.innerHTML = findPreviewHtml(localization, model, data.manifest, result, state.pointCap, tagsActive);
+    wireBoRows(panel);
+    panel.querySelector(".bo-find-apply")?.addEventListener("click", () => {
+      if (curFind?.kind !== "found") return;
+      state = { selected: new Set(curFind.stars), pointCap: state.pointCap };
+      findFor = null;
+      refresh();
+    });
+    panel.querySelector(".bo-find-dismiss")?.addEventListener("click", () => {
+      findFor = null;
+      refresh();
+    });
   }
   function paintTransition(t: NonNullable<SelectionView["transition"]>) {
     hideBoPop();
@@ -848,7 +900,7 @@ async function boot() {
   }
   // The hash, written by both render paths. Search uses "replace" so typing never floods history.
   function writeHash(urlMode: "push" | "replace") {
-    const next = `#${encodeHash(state.selected, state.pointCap, canonical, selectedBenefits, benefitCanonical, baseline, query, source)}`;
+    const next = `#${encodeHash(state.selected, state.pointCap, canonical, selectedBenefits, benefitCanonical, baseline, query, source, findFor !== null)}`;
     // Only touch history when the hash actually changed: no-op refreshes (language switch,
     // popover re-renders) must create no entry and leave the current one alone.
     if (next === location.hash) return;
@@ -936,8 +988,35 @@ async function boot() {
         boInfo = { kind: "empty" };
       }
     }
+    // Find is offered only for an incomplete selection under a finite cap, outside compare mode.
+    const capped = !!table && Number.isFinite(state.pointCap);
+    const findBtn: FindButton = baseline
+      ? { enabled: false, reason: "compare" }
+      : !capped
+        ? { enabled: false, reason: "uncapped" }
+        : state.selected.size === 0
+          ? { enabled: false, reason: "empty" }
+          : boInfo?.kind === "incomplete"
+            ? { enabled: true }
+            : { enabled: false, reason: "complete" };
+    const findKey = `${selectionKey(state.selected)}|${state.pointCap}`;
+    if (pendingFind) {
+      pendingFind = false;
+      if (findBtn.enabled) findFor = findKey;
+    }
+    // A stale preview (the selection or cap moved, or Find no longer applies) is dropped, never shown.
+    if (findFor !== null && (findFor !== findKey || !findBtn.enabled)) findFor = null;
+    curFind = null;
+    if (findFor !== null && table) {
+      const tags = [...selectedBenefits].sort();
+      const memoKey = `${findKey}|${tags.join(",")}`;
+      if (findMemo?.key !== memoKey)
+        findMemo = { key: memoKey, result: findSupport(model, cons, table, state.selected, state.pointCap, tags) };
+      curFind = findMemo.result;
+    }
     if (curTransition) paintTransition(curTransition);
-    else paintBuildOrder(curBuildOrder, boInfo);
+    else if (curFind) paintFind(curFind);
+    else paintBuildOrder(curBuildOrder, boInfo, findBtn);
     const uncapped = !Number.isFinite(state.pointCap);
     capToggle.textContent = uncapped ? "∞" : String(state.pointCap);
     capToggle.title = uncapped

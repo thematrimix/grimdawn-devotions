@@ -351,3 +351,18 @@ describe("canonical id lists match the pinned wire format", () => {
       expect(current.length).toBe(pinned.length);
     });
 });
+
+test("the Find preview flag round-trips as fd=1", () => {
+  const h = encodeHash(new Set(), 55, canonical, new Set(), [], null, "", "", true);
+  expect(h).toContain("fd=1");
+  expect(decodeHash(h, canonical, [])!.find).toBe(true);
+});
+
+test("no preview emits no fd= and an absent fd= decodes to false", () => {
+  expect(encodeHash(new Set(), 55, canonical, new Set(), [], null, "", "")).not.toContain("fd=");
+  expect(decodeHash("p=55&s=AA", canonical, [])!.find).toBe(false);
+});
+
+test("a malformed fd= means no preview", () => {
+  for (const v of ["0", "true", "", "11", "%31x"]) expect(decodeHash(`p=55&fd=${v}`, canonical, [])!.find).toBe(false);
+});

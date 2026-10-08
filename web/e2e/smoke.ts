@@ -902,6 +902,72 @@ try {
     `no console errors after the build-order popup checks (got ${cdp.consoleErrors.length})`,
   );
 
+  // --- Find: preview the cheapest supporting build, share it, Apply, Back, Dismiss ---
+  const waitFor = async (expr: string, ms = 15_000): Promise<boolean> => {
+    for (let i = 0; i < ms / 100; i++) {
+      if (await cdp.evaluate<boolean>(expr)) return true;
+      await Bun.sleep(100);
+    }
+    return false;
+  };
+  // Oleron alone (needs support) with one tagged attribute.
+  const oleron =
+    "p=55&s=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAHw&b=AAAAAAAAAAAAAAAAgA";
+  await cdp.evaluate(`location.hash = "${oleron}"`);
+  check(
+    await waitFor(
+      "!!document.querySelector('#build-order-panel .bo-find') && !document.querySelector('.bo-find').disabled",
+    ),
+    "Find is enabled for an incomplete selection",
+  );
+  await cdp.evaluate("document.querySelector('.bo-find').click()");
+  check(await waitFor("!!document.querySelector('.bo-find-apply')"), "Find shows a suggestion preview with Apply");
+  const summary = await cdp.evaluate<string>("document.querySelector('.bo-find-summary')?.textContent ?? ''");
+  check(summary.includes("+24"), `the preview names the cheapest support (+24 for Oleron): "${summary}"`);
+  check(
+    (await cdp.evaluate<number>("document.querySelectorAll('#build-order-panel .bo-step').length")) > 0,
+    "the preview shows the verified order",
+  );
+  const findHash = await cdp.evaluate<string>("location.hash");
+  check(findHash.includes("fd=1"), "the preview rides in the URL (fd=1)");
+  // A copied link restores the same preview.
+  await cdp.evaluate(`location.hash = "p=55"`);
+  await waitFor("!document.querySelector('.bo-find-apply')");
+  await cdp.evaluate(`location.hash = "${findHash.slice(1)}"`);
+  check(await waitFor("!!document.querySelector('.bo-find-apply')"), "a link with fd=1 restores the preview");
+  check(
+    (await cdp.evaluate<string>("document.querySelector('.bo-find-summary')?.textContent ?? ''")) === summary,
+    "the restored preview is identical",
+  );
+  await cdp.evaluate("document.querySelector('.bo-find-apply').click()");
+  check(
+    await waitFor(
+      "!document.querySelector('.bo-find-apply') && document.querySelectorAll('#build-order-panel .bo-step').length > 0",
+    ),
+    "Apply makes the suggestion the build and shows its order",
+  );
+  check(
+    (await cdp.evaluate<string>("document.getElementById('point-bar').textContent")).includes("31 used"),
+    "Apply selects the 31-point build",
+  );
+  check(!(await cdp.evaluate<string>("location.hash")).includes("fd="), "Apply clears the preview flag");
+  check(
+    await cdp.evaluate<boolean>("document.querySelector('.bo-find').disabled"),
+    "Find is disabled once the build covers its own affinity",
+  );
+  await cdp.evaluate("history.back()");
+  check(await waitFor("!!document.querySelector('.bo-find-apply')"), "Back after Apply returns to the preview");
+  await cdp.evaluate("document.querySelector('.bo-find-dismiss').click()");
+  check(
+    await waitFor("!document.querySelector('.bo-find-apply') && !location.hash.includes('fd=')"),
+    "Dismiss drops the preview and its flag",
+  );
+  check(
+    (await cdp.evaluate<string>("document.getElementById('point-bar').textContent")).includes("7 used"),
+    "Dismiss leaves the selection unchanged",
+  );
+  check(cdp.consoleErrors.length === 0, `no console errors after the Find checks (got ${cdp.consoleErrors.length})`);
+
   failed = results.some((r) => !r.ok);
 } catch (err) {
   console.error(`\nE2E ERROR: ${(err as Error).message}`);

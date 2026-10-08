@@ -9,7 +9,7 @@ const MAX_CAP = 55;
 const MAX_QUERY = 100; // a shared link carries a search box's worth of text, not a document
 
 /** Every param decodeHash understands. Presence of any one makes a hash ours to decode. */
-const KNOWN_PARAMS = ["p", "s", "b", "q", "cs", "cp", "gt"] as const;
+const KNOWN_PARAMS = ["p", "s", "b", "q", "cs", "cp", "gt", "fd"] as const;
 
 /**
  * A point-cap param (`p=` live, `cp=` baseline). Absent, empty, or unparseable all mean the full
@@ -192,6 +192,7 @@ export function encodeHash(
   baseline: { selected: Set<StarId>; pointCap: number } | null = null,
   query: string = "",
   source: string = "",
+  find = false,
 ): string {
   // p=0 is the uncapped sentinel (0 is otherwise an invalid cap; the real min is 1).
   const cap = Number.isFinite(pointCap) ? pointCap : 0;
@@ -209,6 +210,8 @@ export function encodeHash(
   // Provenance only: the selection above is authoritative, so this never affects what is restored.
   const gt = normalizeSource(source);
   if (gt) out += `&gt=${gt}`;
+  // The Find preview is derived (a pure function of the state above), so the flag alone restores it.
+  if (find) out += "&fd=1";
   return out;
 }
 
@@ -225,6 +228,7 @@ export function decodeHash(
   baseline: { selected: Set<StarId>; pointCap: number } | null;
   query: string;
   source: string;
+  find: boolean;
 } | null {
   const raw = hash.replace(/^#/, "").trim();
   if (!raw) return null;
@@ -254,5 +258,9 @@ export function decodeHash(
 
   const source = normalizeSource(params.get("gt") ?? "");
 
-  return { selected, pointCap, benefits, baseline, query, source };
+  // Anything but exactly "1" means no preview; whether the preview applies to this selection is the
+  // planner's call (a stale flag on a selection Find has nothing to add to is simply ignored there).
+  const find = params.get("fd") === "1";
+
+  return { selected, pointCap, benefits, baseline, query, source, find };
 }
