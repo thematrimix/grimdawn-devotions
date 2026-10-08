@@ -1,6 +1,6 @@
 // ABOUTME: Encodes/decodes planner state (point cap, selected stars, selected benefit tags) to a compact URL hash.
 // ABOUTME: Each selection is a trailing-trimmed bitset over a stable canonical id order, base64url-encoded.
-import { AFFINITIES, type DevotionModel, type StarId } from "./types";
+import { AFFINITIES, type DevotionModel, type FindMode, type StarId } from "./types";
 import { affinityTagId, petTagId } from "./benefitTag";
 import { isFilterableStat, powerStatBenefit } from "./statFormat";
 
@@ -9,7 +9,7 @@ const MAX_CAP = 55;
 const MAX_QUERY = 100; // a shared link carries a search box's worth of text, not a document
 
 /** Every param decodeHash understands. Presence of any one makes a hash ours to decode. */
-const KNOWN_PARAMS = ["p", "s", "b", "q", "cs", "cp", "gt"] as const;
+const KNOWN_PARAMS = ["p", "s", "b", "q", "cs", "cp", "gt", "fd", "fc", "fm"] as const;
 
 /**
  * A point-cap param (`p=` live, `cp=` baseline). Absent, empty, or unparseable all mean the full
@@ -192,6 +192,9 @@ export function encodeHash(
   baseline: { selected: Set<StarId>; pointCap: number } | null = null,
   query: string = "",
   source: string = "",
+  find = false,
+  findCore: Set<StarId> | null = null,
+  findMode: FindMode = "cheapest",
 ): string {
   // p=0 is the uncapped sentinel (0 is otherwise an invalid cap; the real min is 1).
   const cap = Number.isFinite(pointCap) ? pointCap : 0;
@@ -209,6 +212,13 @@ export function encodeHash(
   // Provenance only: the selection above is authoritative, so this never affects what is restored.
   const gt = normalizeSource(source);
   if (gt) out += `&gt=${gt}`;
+  // The Find preview is derived (a pure function of the state above), so the flag alone restores it.
+  if (find) out += "&fd=1";
+  // The core rides only when Find's suggestions are part of the selection (core differs from it).
+  if (findCore && findCore.size > 0 && findCore.size !== selected.size)
+    out += `&fc=${encodeBitset(findCore, canonical)}`;
+  if (findMode === "fill") out += "&fm=1";
+  else if (findMode === "attributes") out += "&fm=2";
   return out;
 }
 
@@ -225,6 +235,9 @@ export function decodeHash(
   baseline: { selected: Set<StarId>; pointCap: number } | null;
   query: string;
   source: string;
+  find: boolean;
+  findCore: Set<StarId> | null;
+  findMode: FindMode;
 } | null {
   const raw = hash.replace(/^#/, "").trim();
   if (!raw) return null;
@@ -254,5 +267,16 @@ export function decodeHash(
 
   const source = normalizeSource(params.get("gt") ?? "");
 
-  return { selected, pointCap, benefits, baseline, query, source };
+  // Anything but exactly "1" means no preview; whether the preview applies to this selection is the
+  // planner's call (a stale flag on a selection Find has nothing to add to is simply ignored there).
+  const find = params.get("fd") === "1";
+
+  // A stale core is clamped into the selection; an empty or equal one means "core = selection".
+  const coreRaw = decodeBitset(params.get("fc") ?? "", canonical);
+  const coreIn = new Set([...coreRaw].filter((s) => selected.has(s)));
+  const findCore = coreIn.size > 0 && coreIn.size < selected.size ? coreIn : null;
+  const fm = params.get("fm");
+  const findMode: FindMode = fm === "1" ? "fill" : fm === "2" ? "attributes" : "cheapest";
+
+  return { selected, pointCap, benefits, baseline, query, source, find, findCore, findMode };
 }

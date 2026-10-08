@@ -65,10 +65,10 @@ export interface CoverTable {
   strides: Vec;
 }
 
-const zero = (): Vec => [0, 0, 0, 0, 0];
-const covers = (g: Vec, d: Vec): boolean =>
+export const zero = (): Vec => [0, 0, 0, 0, 0];
+export const covers = (g: Vec, d: Vec): boolean =>
   g[0] >= d[0] && g[1] >= d[1] && g[2] >= d[2] && g[3] >= d[3] && g[4] >= d[4];
-const addCap = (g: Vec, x: Vec): Vec => [
+export const addCap = (g: Vec, x: Vec): Vec => [
   Math.min(g[0] + x[0], CAP_MAX[0]!),
   Math.min(g[1] + x[1], CAP_MAX[1]!),
   Math.min(g[2] + x[2], CAP_MAX[2]!),
@@ -76,7 +76,7 @@ const addCap = (g: Vec, x: Vec): Vec => [
   Math.min(g[4] + x[4], CAP_MAX[4]!),
 ];
 const addV = (g: Vec, x: Vec): Vec => [g[0] + x[0], g[1] + x[1], g[2] + x[2], g[3] + x[3], g[4] + x[4]];
-const maxV = (a: Vec, b: Vec): Vec => [
+export const maxV = (a: Vec, b: Vec): Vec => [
   Math.max(a[0], b[0]),
   Math.max(a[1], b[1]),
   Math.max(a[2], b[2]),
@@ -336,6 +336,16 @@ let greedyBootColors = 0;
 export function lastGreedyBootColors(): number {
   return greedyBootColors;
 }
+// The pool and placement flags of the LAST greedyFrom run, held by reference (no copy on the hot path) so
+// a caller can read greedy's own build as a witness. Read immediately after greedyFrom; only meaningful on
+// a finite cost. Filler past `builtLen`; a partial's finish appears as `${id}#finish`.
+let greedyPlaced: { pool: ReachCon[]; placed: boolean[]; builtLen: number } | null = null;
+/** The filler the last greedyFrom run placed on top of the committed members (see greedyPlaced). */
+export function lastGreedyFiller(): ReachCon[] {
+  if (!greedyPlaced) return [];
+  const { pool, placed, builtLen } = greedyPlaced;
+  return pool.filter((_, i) => i >= builtLen && placed[i]);
+}
 const popcount5 = (m: number): number => (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1) + ((m >> 3) & 1) + ((m >> 4) & 1);
 
 export function greedyFrom(cons: ReachCon[], st: ReachState, budget = BUDGET): number {
@@ -343,6 +353,7 @@ export function greedyFrom(cons: ReachCon[], st: ReachState, budget = BUDGET): n
   const built = st.built;
   const pool = [...built, ...fillerFor(cons, st)];
   const placed = new Array(pool.length).fill(false);
+  greedyPlaced = { pool, placed, builtLen: built.length };
   // Every crossroads-like constellation is in the pool (started ones in built, the rest as filler); the
   // seed offers a color only while one of its crossroads is unplaced, so a crossroads is never counted
   // twice (once as the transient seed, again as a placed member or filler).
@@ -444,7 +455,7 @@ export function reachabilitySweep(
   return out;
 }
 
-function coverCostAt(table: CoverTable, deficit: Vec): number {
+export function coverCostAt(table: CoverTable, deficit: Vec): number {
   let k = 0;
   for (let i = 0; i < 5; i++) k += Math.min(Math.max(0, deficit[i]!), table.caps[i]!) * table.strides[i]!;
   const v = table.cost[k]!;
@@ -484,7 +495,7 @@ function constructible(cons: ReachCon[], B: ReachCon[]): boolean {
  * bootstrap sequentially so not every crossroads is held at once - returns false and must fall through
  * to the peak witness. Crucially RNG-free, so the WASM resolver port stays verdict-equivalent.
  */
-function peakGateReachable(cons: ReachCon[], B: ReachCon[], budget: number): boolean {
+export function peakGateReachable(cons: ReachCon[], B: ReachCon[], budget: number): boolean {
   let size = 0;
   let grant = zero(),
     req = zero();

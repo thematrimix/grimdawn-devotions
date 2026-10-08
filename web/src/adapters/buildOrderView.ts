@@ -1,12 +1,15 @@
 // ABOUTME: Renders the guided build-order panel: a numbered step list with constellation art, scaffold
 // ABOUTME: add/refund rows, a running held total, honest empty states, and the per-step affinity popup
-// ABOUTME: (post-step have/need in the Affinity panel's visual language). Pure string output.
+// ABOUTME: (post-step have/need in the Affinity panel's visual language), the Find button beside the heading,
+// ABOUTME: and Find's suggestion preview with Apply/Dismiss. Pure string output.
 import type { Affinity, DevotionModel } from "../core/types";
 import { AFFINITIES } from "../core/types";
 import type { AffinityDeficit } from "../core/dimReasons";
 import { deficitPhrase } from "./dimText";
 import type { StepState, TransStep } from "../core/orderLegality";
 import type { BuildStep } from "../core/reachability";
+import { selectionDelta, type FindOutcome } from "../core/findBuild";
+import type { FindMode, StarId } from "../core/types";
 import type { TransitionRung } from "../core/transitionOrder";
 import type { AssetManifest } from "../ports/DataSource";
 import { affinityOrb } from "./affinityColors";
@@ -46,12 +49,43 @@ export type NoOrderInfo =
   | { kind: "incomplete"; deficit: AffinityDeficit[] }
   | { kind: "searched"; minCap: number | null };
 
+// The Find controls beside the Build Order heading: a mode selector and the button. Find is usable on any
+// non-empty selection under a finite cap, outside compare mode; disabled, its title says why.
+export type FindButton =
+  | { enabled: true; mode: FindMode }
+  | { enabled: false; reason: "empty" | "uncapped" | "compare" | "previewing"; mode: FindMode };
+
+const FIND_DISABLED_KEY: Record<Exclude<FindButton, { enabled: true }>["reason"], string> = {
+  empty: "ui.buildOrder.findDisabledEmpty",
+  uncapped: "ui.buildOrder.findDisabledUncapped",
+  compare: "ui.buildOrder.findDisabledCompare",
+  previewing: "ui.buildOrder.findDisabledPreviewing",
+};
+const FIND_MODES: FindMode[] = ["cheapest", "fill", "attributes"];
+
+/** The panel heading with the Find controls beside it (none when `find` is omitted). */
+function headingHtml(loc: Localization, find?: FindButton): string {
+  const h = `<h2>${loc.translate("ui.panel.buildOrder")}</h2>`;
+  if (!find) return h;
+  const title = esc(loc.translate(find.enabled ? "ui.buildOrder.findTitle" : FIND_DISABLED_KEY[find.reason]));
+  // The selector stays live while previewing (switching mode recomputes); only compare/uncapped/empty lock it.
+  const lockMode = !find.enabled && find.reason !== "previewing";
+  const options = FIND_MODES.map(
+    (m) =>
+      `<option value="${m}"${m === find.mode ? " selected" : ""}>${loc.translate(`ui.buildOrder.findMode.${m}`)}</option>`,
+  ).join("");
+  const select = `<select class="bo-find-mode" aria-label="${esc(loc.translate("ui.buildOrder.findModeLabel"))}"${lockMode ? " disabled" : ""}>${options}</select>`;
+  const btn = `<button type="button" class="bo-find" title="${title}"${find.enabled ? "" : " disabled"}>${loc.translate("ui.buildOrder.find")}</button>`;
+  return `<div class="bo-head">${h}<span class="bo-find-ctl">${select}${btn}</span></div>`;
+}
+
 export function buildOrderHtml(
   loc: Localization,
   model: DevotionModel,
   manifest: AssetManifest | null,
   steps: BuildStep[] | null,
   noOrder?: NoOrderInfo | null,
+  find?: FindButton,
 ): string {
   if (!steps) {
     const info: NoOrderInfo = noOrder ?? { kind: "empty" };
@@ -71,10 +105,20 @@ export function buildOrderHtml(
       // nothing to order yet: the order appears once the selection covers its own affinity.
       body = `<div class="bo-empty-msg">${loc.translate("ui.buildOrder.selectPrompt")}</div>`;
     }
-    return `<h2>${loc.translate("ui.panel.buildOrder")}</h2><div class="bo-empty">${body}</div>`;
+    return `${headingHtml(loc, find)}<div class="bo-empty">${body}</div>`;
   }
+  return `${headingHtml(loc, find)}<div class="bo-list">${stepRowsHtml(loc, model, manifest, steps)}</div>`;
+}
+
+// The numbered from-scratch step rows, shared by the live panel and Find's preview.
+function stepRowsHtml(
+  loc: Localization,
+  model: DevotionModel,
+  manifest: AssetManifest | null,
+  steps: BuildStep[],
+): string {
   let n = 0;
-  const rows = steps
+  return steps
     .map((s, si) => {
       const c = model.constellations.get(s.conId);
       const cr = CROSSROADS[s.conId];
@@ -104,7 +148,62 @@ export function buildOrderHtml(
       return `<div class="bo-step ${cls}" data-con-id="${esc(s.conId)}" data-step-i="${si}"><span class="bo-n"></span>${artCell}<span class="bo-name">${label} ${esc(name)}</span><span class="bo-pts">${s.points > 0 ? "+" : ""}${s.points}</span>${held}</div>`;
     })
     .join("");
-  return `<h2>${loc.translate("ui.panel.buildOrder")}</h2><div class="bo-list">${rows}</div>`;
+}
+
+/**
+ * Find's preview: the mode's suggestion against the current selection, as per-constellation Adds and
+ * Removes (Find's earlier suggestions it swaps out) and any core constellations Dropped to stay legal;
+ * its added points and peak against the cap; the tagged count; the verified order; Apply and Dismiss.
+ * A suggestion equal to the selection says so and disables Apply.
+ */
+export function findPreviewHtml(
+  loc: Localization,
+  model: DevotionModel,
+  manifest: AssetManifest | null,
+  outcome: FindOutcome,
+  selection: Set<StarId>,
+  cap: number,
+  mode: FindMode,
+  tagsActive: boolean,
+): string {
+  const head = headingHtml(loc, { enabled: false, reason: "previewing", mode });
+  const dismiss = `<button type="button" class="bo-find-dismiss">${loc.translate("ui.buildOrder.findDismiss")}</button>`;
+  if (outcome.kind === "none")
+    return `${head}<div class="bo-empty"><div class="bo-empty-msg">${loc.translate("ui.buildOrder.findNone")}</div></div><div class="bo-find-actions">${dismiss}</div>`;
+  const dropped = new Set(outcome.dropped);
+  const delta = selectionDelta(model, selection, outcome.stars);
+  const label = (d: { conId: string; to: number; total: number }) => {
+    const name = esc(stepConName(loc, model, d.conId));
+    return d.to > 0 && d.to < d.total
+      ? `${name} <span class="bo-partial">${loc.translate("ui.buildOrder.partial", { taken: d.to, total: d.total })}</span>`
+      : name;
+  };
+  const list = (cls: string, headKey: string, items: string[]) =>
+    items.length
+      ? `<div class="bo-find-sub">${loc.translate(headKey)}</div><ul class="${cls}">${items.map((i) => `<li>${i}</li>`).join("")}</ul>`
+      : "";
+  const adds = delta.filter((d) => d.to > d.from).map(label);
+  const removes = delta.filter((d) => d.to < d.from && !dropped.has(d.conId)).map(label);
+  const drops = outcome.dropped.map((id) => esc(stepConName(loc, model, id)));
+  const unchanged = adds.length === 0 && removes.length === 0;
+  const summary = `<div class="bo-find-summary">${loc.translate("ui.buildOrder.findSuggested", { added: outcome.addedStars, peak: outcome.peak, cap })}</div>`;
+  const optimal = unchanged
+    ? `<div class="bo-find-optimal">${loc.translate("ui.buildOrder.findAlreadyOptimal")}</div>`
+    : "";
+  const bestKey = mode === "attributes" ? "ui.buildOrder.findBestFoundAttributes" : "ui.buildOrder.findBestFound";
+  const best = outcome.exhaustive ? "" : `<div class="bo-note">${loc.translate(bestKey)}</div>`;
+  const tagged = tagsActive
+    ? `<div class="bo-empty-sub">${loc.translate("ui.buildOrder.findTagged", { count: outcome.tagged })}</div>`
+    : "";
+  const apply = `<button type="button" class="bo-find-apply"${unchanged ? " disabled" : ""}>${loc.translate("ui.buildOrder.findApply")}</button>`;
+  return (
+    `${head}<div class="bo-find-box">${summary}${optimal}${best}` +
+    list("bo-find-adds", "ui.buildOrder.findAdds", adds) +
+    list("bo-find-removes", "ui.buildOrder.findRemoves", removes) +
+    list("bo-find-dropped", "ui.buildOrder.findDropped", drops) +
+    `${tagged}<div class="bo-find-actions">${apply}${dismiss}</div></div>` +
+    `<div class="bo-list">${stepRowsHtml(loc, model, manifest, outcome.order)}</div>`
+  );
 }
 
 /**
@@ -124,7 +223,7 @@ export function transitionHtml(
   steps: TransStep[],
   rung: TransitionRung,
 ): string {
-  const head = `<h2>${loc.translate("ui.panel.buildOrder")}</h2><div class="bo-compare-head">${loc.translate("ui.buildOrder.transitionHeading")}</div>`;
+  const head = `${headingHtml(loc, { enabled: false, reason: "compare", mode: "cheapest" })}<div class="bo-compare-head">${loc.translate("ui.buildOrder.transitionHeading")}</div>`;
   if (!steps.length) return `${head}<div class="bo-empty">${loc.translate("ui.buildOrder.transitionIdentical")}</div>`;
   const note =
     rung === "full-respec" ? `<div class="bo-note">${loc.translate("ui.buildOrder.fullRespecNote")}</div>` : "";

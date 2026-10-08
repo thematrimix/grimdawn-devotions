@@ -324,6 +324,96 @@ divergence counter covering both the synthetic corpus and the real one), and
 the offline harness `just build-order-validate`, whose illegal-path count
 must stay zero.
 
+## Find
+
+The Find button beside the Build Order heading suggests a better build for the user's selection,
+shown as a preview they apply or dismiss. It is usable on any non-empty selection under a finite
+cap, outside compare mode. A mode selector beside it picks the objective. While the preview is open
+(`fd=1`), any change to the selection, cap, tags or mode recomputes it in place. The code is in
+`web/src/core/findBuild.ts` (modes), `supportFinder.ts` (support search), `findFill.ts` (fill) and
+`findCore.ts` (the core).
+
+- **The core.** Find computes from the stars the user chose, not from its own earlier suggestions.
+  Apply sets the selection to the suggestion and records the core it kept. After that, clicks join
+  or leave the core (`reconcileCore`), and wholesale replacements (import, save load, Reset, the
+  baseline revert and swap, a link without `fc=`) reset it to the selection. The core rides in the
+  URL as `fc=` only when it differs from the selection; a stale `fc=` is clamped into the selection.
+  So a later Find can swap out support it suggested before. The preview lists **Adds**, **Removes**
+  (earlier suggestions no longer used) and **Dropped**.
+- **Scoring is true OR.** A star scores 1 when it carries at least one tagged player or pet
+  attribute, and 0 otherwise. Affinity tags never score. With nothing that scores, every mode runs as
+  Cheapest.
+- **Two numbers.** Added stars (final size over the core) and the construction peak (most points
+  held at once, scaffolding included) are different numbers: Ulo alone finishes at 9 stars but peaks
+  at 13, which is what `selectionMinCost` reports. The peak must fit the cap; the preview shows both.
+
+### Modes (`fm=`)
+
+- **Cheapest** (default). The fewest added stars, then the most tagged stars, the lowest peak and
+  canonical ids. The search has the exact resolver's shape: every subset of partial finishes, then
+  a cover-table-pruned DFS over whole granting constellations, with covering supersets pruned.
+  Phase 1 pursues only strictly cheaper builds to prove the minimum; phase 2 enumerates every
+  accepted build at that cost for the tie-break. A covering build is accepted by the ladder gate or
+  the peak witness with seeded shuffles (the classify path's count, not the resolver's zero): Find
+  runs on demand, so it can afford the cap-tight builds only a shuffled order fits.
+- **Cheapest + fill.** The Cheapest build, then the points left under the cap spent on as many
+  tagged stars as fit (`fillTagged`). The fill only takes constellations whose requirement the build
+  already covers, so any predecessor-closed pick keeps the build valid. Each constellation's closed
+  subsets (at most 2^8) give its best tagged count per size, and a multiple-choice knapsack over the
+  capacity picks across them: exact under that rule. When the oracle rejects a filled build, the
+  fill is retried at a smaller capacity.
+- **Most attributes.** As many tagged stars as fit in the cap, even when support costs more. It
+  starts from Cheapest + fill and improves greedily. Each round tries adding the tagged stars (with
+  predecessors) of a "blocked" constellation, one the build cannot fill because its requirement is
+  above the supply, to the core, re-runs Cheapest + fill, and keeps the best improvement. The
+  winner is then pruned and refilled: support the fill made redundant is dropped and its points
+  refilled. Greedy proves nothing, so the result is labelled "best found" unless it reaches the
+  trivial bound (every remaining tagged star, or every free point). Enumerating support sets and
+  ranking them was tried and rejected: on Oleron the walk never reached the cheap region even at 2M
+  nodes.
+
+Every mode's work caps count nodes, candidates and rounds, never wall-clock, so the suggestion is
+a pure function of (core, cap, tags, mode) and a shared link restores it.
+
+### Verified or absent, and dropping
+
+Every suggestion is replayed through the panel's own path (`buildOrderPath` at 32 tries, then
+`gateBuildOrder`), so the previewed order is the one the panel shows after Apply. Cheapest falls
+back to greedy's own build (`lastGreedyFiller`) when its ranked candidates fail the oracle. If no
+mode finds a legal build from the core, the core's smallest constellation is dropped and the search
+retried; the preview lists what was dropped. With a valid selection this should not fire, because
+the planner already refuses selections that cannot be completed.
+
+### Boundaries and numbers
+
+Find only reads exported engine helpers. No classify or resolver verdict depends on it, so nothing
+is mirrored in Rust.
+
+Measured by `bun scripts/find-perf.ts` over the 858 incomplete selections made by dropping one
+granting member from each `real-builds.json` build (TS resolver), with no tags and then with three
+OR tags (physical resistance, all damage, armor absorption):
+
+```
+# no tags
+cheapest   n=858 none=0 illegal=0 bestFound=0 p50=13.1ms p95=109.4ms max=479.8ms
+fill       n=858 none=0 illegal=0 bestFound=0 p50=12.8ms p95=108.3ms max=499.7ms
+attributes n=858 none=0 illegal=0 bestFound=0 p50=12.4ms p95=106.1ms max=515.6ms
+# three OR tags
+cheapest   n=858 none=0 illegal=0 bestFound=0 p50=13.9ms p95=95.2ms max=285.9ms
+fill       n=858 none=0 illegal=0 bestFound=0 p50=18.1ms p95=130.8ms max=379.3ms
+attributes n=858 none=0 illegal=0 bestFound=857 p50=24.6ms p95=149.3ms max=975.3ms
+```
+
+`bestFound` counts results labelled "best found": Most attributes reaches its trivial bound only
+rarely, so nearly every tagged result carries the label.
+
+The tests: `support-finder.test.ts` (Cheapest: brute-force optimality and tie-break on synthetic
+models, Oleron +24 for a 31-point build, the Ulo size/peak split, partial finishes, determinism, a
+corpus sample), `find-fill.test.ts` (the fill against brute force, branching predecessors),
+`find-build.test.ts` (the modes, true OR, dropping, the no-tag and zero-capacity edges),
+`find-core.test.ts` and `urlState.test.ts` (the core and `fc=`/`fm=`/`fd=`), and the Find block of
+`web/e2e/smoke.ts`.
+
 ## Investigating a reported build
 
 A user report usually arrives as a share link ("it shows 54 used but will not let me
