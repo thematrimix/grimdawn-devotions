@@ -13,8 +13,9 @@ import {
 import { findSupport, type FindFound } from "../src/core/supportFinder";
 import { gateBuildOrder, verifyBuildOrder } from "../src/core/orderLegality";
 import { buildModel } from "../src/core/model";
-import { AFFINITIES, type Constellation, type DevotionModel, type Star, type StarId } from "../src/core/types";
+import type { DevotionModel, StarId } from "../src/core/types";
 import { mulberry32, randModel } from "./support/reach-oracle";
+import { modelOf } from "./support/synthModel";
 import doc from "../../data/devotions.json";
 import fixtureJson from "./fixtures/reachable-builds.json";
 
@@ -31,42 +32,6 @@ const found = (r: ReturnType<typeof findSupport>): FindFound => {
   return r as FindFound;
 };
 const membersOf = (m: DevotionModel, stars: Set<StarId>): ReachCon[] => selectionSummary(m, stars).built;
-
-/** A DevotionModel for synthetic ReachCons: each constellation a chain of `size` stars. Stars of the
- *  constellations in `tagged` carry the bonus "t", so a tag on "t" scores them. */
-function modelOf(rcons: ReachCon[], tagged: Set<string> = new Set()): DevotionModel {
-  const stars = new Map<StarId, Star>();
-  const constellations = new Map<string, Constellation>();
-  const mapOf = (v: number[]) => Object.fromEntries(AFFINITIES.map((a, i) => [a, v[i]!]).filter(([, n]) => n));
-  for (const c of rcons) {
-    const starIds: StarId[] = [];
-    for (let i = 0; i < c.size; i++) {
-      const id = `${c.id}:${i}` as StarId;
-      starIds.push(id);
-      stars.set(id, {
-        id,
-        constellationId: c.id,
-        index: i,
-        predecessors: i ? [`${c.id}:${i - 1}` as StarId] : [],
-        position: { x: 0, y: 0 },
-        bonuses: tagged.has(c.id) ? { t: 1 } : {},
-        celestialPower: null,
-        weaponRequirement: null,
-      });
-    }
-    constellations.set(c.id, {
-      id: c.id,
-      nameTag: c.id,
-      descriptionTag: null,
-      tier: 1,
-      affinityRequired: mapOf(c.req),
-      affinityBonus: mapOf(c.grant),
-      background: null,
-      starIds,
-    });
-  }
-  return { stars, constellations };
-}
 
 /** Ground truth on a small model: every subset of the other constellations (and of partial finishes,
  *  which here are whole constellations), kept only when it has an oracle-verified order at the cap.
