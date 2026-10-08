@@ -182,10 +182,13 @@ export function findPreviewHtml(
     items.length
       ? `<div class="bo-find-sub">${loc.translate(headKey)}</div><ul class="${cls}">${items.map((i) => `<li>${i}</li>`).join("")}</ul>`
       : "";
-  const adds = delta.filter((d) => d.to > d.from).map(label);
-  const removes = delta.filter((d) => d.to < d.from && !dropped.has(d.conId)).map(label);
+  // Star-aware: a constellation that gains any star is an Add, one that loses any (not dropped) a Remove;
+  // a same-count swap inside one constellation is both.
+  const adds = delta.filter((d) => d.gained > 0).map(label);
+  const removes = delta.filter((d) => d.lost > 0 && !dropped.has(d.conId)).map(label);
   const drops = outcome.dropped.map((id) => esc(stepConName(loc, model, id)));
-  const unchanged = adds.length === 0 && removes.length === 0;
+  // Set equality, not the lists: drops and swaps change the build even when the lists look empty.
+  const unchanged = outcome.stars.size === selection.size && [...selection].every((s) => outcome.stars.has(s));
   const summary = `<div class="bo-find-summary">${loc.translate("ui.buildOrder.findSuggested", { added: outcome.addedStars, peak: outcome.peak, cap })}</div>`;
   const optimal = unchanged
     ? `<div class="bo-find-optimal">${loc.translate("ui.buildOrder.findAlreadyOptimal")}</div>`

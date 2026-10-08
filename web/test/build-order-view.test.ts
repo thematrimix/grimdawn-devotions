@@ -142,3 +142,33 @@ test("findPreviewHtml uses the attributes-specific best-found note", () => {
     enLoc.translate("ui.buildOrder.findBestFound"),
   );
 });
+
+test("findPreviewHtml: a same-count swap is listed under Adds and Removes and Apply stays enabled", () => {
+  const out = findBuild(model, rcons, rtable, oleron, 55, [], "cheapest") as FindPlan;
+  const w = model.constellations.get("wraith")!.starIds;
+  const swapped = { ...out, stars: new Set([...out.stars, w[0]!, w[2]!]) };
+  const html = findPreviewHtml(
+    enLoc,
+    model,
+    null,
+    swapped,
+    new Set([...out.stars, w[0]!, w[3]!]),
+    55,
+    "cheapest",
+    false,
+  );
+  expect(html).toContain("bo-find-adds");
+  expect(html).toContain("bo-find-removes");
+  expect(html).not.toContain("bo-find-optimal");
+  expect(html).not.toMatch(/class="bo-find-apply" disabled/);
+});
+
+test("findPreviewHtml: a dropped-only result is not 'already optimal'", () => {
+  const out = findBuild(model, rcons, rtable, oleron, 55, [], "cheapest") as FindPlan;
+  const crab = model.constellations.get("crab")!.starIds;
+  const dropped = { ...out, dropped: ["crab"] };
+  const html = findPreviewHtml(enLoc, model, null, dropped, new Set([...out.stars, ...crab]), 55, "cheapest", false);
+  expect(html).toContain("bo-find-dropped");
+  expect(html).not.toContain("bo-find-optimal");
+  expect(html).not.toMatch(/class="bo-find-apply" disabled/);
+});

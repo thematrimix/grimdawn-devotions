@@ -983,6 +983,19 @@ try {
     ),
     "a link restores the mode, the core and the open preview",
   );
+  // A cap drag with the preview open recomputes Find once, on release, not on every pointermove.
+  const runsBefore = await cdp.evaluate<number>("window.__findRuns ?? 0");
+  await cdp.evaluate(`(() => {
+    const bar = document.getElementById('point-bar');
+    const r = bar.getBoundingClientRect();
+    const at = (f) => ({ clientX: r.left + r.width * f, clientY: r.top + r.height / 2, bubbles: true, pointerId: 1 });
+    bar.dispatchEvent(new PointerEvent('pointerdown', at(0.95)));
+    for (const f of [0.9, 0.85, 0.8, 0.75, 0.7]) window.dispatchEvent(new PointerEvent('pointermove', at(f)));
+    window.dispatchEvent(new PointerEvent('pointerup', at(0.7)));
+  })()`);
+  await waitFor("!!document.querySelector('.bo-find-box')");
+  const runs = (await cdp.evaluate<number>("window.__findRuns ?? 0")) - runsBefore;
+  check(runs === 1, `a cap drag with the preview open runs Find once, on release (ran ${runs})`);
   await cdp.evaluate("document.querySelector('.bo-find-dismiss').click()");
   check(
     await waitFor("!document.querySelector('.bo-find-box') && !location.hash.includes('fd=')"),

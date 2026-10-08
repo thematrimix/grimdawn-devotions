@@ -192,3 +192,9 @@ test("selectionDelta lists per-constellation star count changes in model order",
   expect(hammer).toMatchObject({ from: 0, to: 2, total: model.constellations.get("hammer")!.starIds.length });
   expect(d.find((x) => x.conId === "oleron")).toBeUndefined();
 });
+
+test("selectionDelta reports a same-count swap inside one constellation as a gain and a loss", () => {
+  const w = model.constellations.get("wraith")!.starIds;
+  const d = selectionDelta(model, new Set([w[0]!, w[3]!]), new Set([w[0]!, w[2]!]));
+  expect(d).toEqual([{ conId: "wraith", from: 2, to: 2, total: w.length, gained: 1, lost: 1 }]);
+});

@@ -34,6 +34,8 @@ export interface ConDelta {
   from: number;
   to: number;
   total: number;
+  gained: number; // stars only in `after` (a same-count swap gains and loses)
+  lost: number; // stars only in `before`
 }
 
 type Draft = Omit<FindPlan, "kind" | "core" | "dropped">;
@@ -222,17 +224,23 @@ function smallestConstellation(model: DevotionModel, stars: Set<StarId>): string
   return best;
 }
 
-/** Per-constellation star counts that differ between two selections, in model order. */
+/** Per-constellation star changes between two selections, in model order (any differing star counts). */
 export function selectionDelta(model: DevotionModel, before: Set<StarId>, after: Set<StarId>): ConDelta[] {
   const out: ConDelta[] = [];
   for (const c of model.constellations.values()) {
     let from = 0;
     let to = 0;
+    let gained = 0;
+    let lost = 0;
     for (const s of c.starIds) {
-      if (before.has(s)) from++;
-      if (after.has(s)) to++;
+      const b = before.has(s);
+      const a = after.has(s);
+      if (b) from++;
+      if (a) to++;
+      if (a && !b) gained++;
+      if (b && !a) lost++;
     }
-    if (from !== to) out.push({ conId: c.id, from, to, total: c.starIds.length });
+    if (gained || lost) out.push({ conId: c.id, from, to, total: c.starIds.length, gained, lost });
   }
   return out;
 }

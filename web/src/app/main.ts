@@ -676,6 +676,7 @@ async function boot() {
     window.removeEventListener("pointermove", onBarMove);
     window.removeEventListener("pointerup", onBarUp);
     window.removeEventListener("pointercancel", onBarUp);
+    if (findOpen) refresh("replace"); // the Find recompute the drag held back
   };
   barEl.addEventListener("pointerdown", (e) => {
     if (!Number.isFinite(state.pointCap)) return; // uncapped: the bar is read-only
@@ -1042,9 +1043,14 @@ async function boot() {
       const core = findCore ?? state.selected;
       const tags = [...selectedBenefits].sort();
       const memoKey = `${selectionKey(core)}|${state.pointCap}|${tags.join(",")}|${findMode}`;
-      if (findMemo?.key !== memoKey)
+      // A cap drag holds the previous preview until release (onBarUp recomputes once): the search can
+      // take a second in Most attributes, and every pointermove is a refresh.
+      if (findMemo?.key !== memoKey && !dragging) {
         findMemo = { key: memoKey, result: findBuild(model, cons, table, core, state.pointCap, tags, findMode) };
-      curFind = findMemo.result;
+        (globalThis as Record<string, unknown>).__findRuns =
+          (((globalThis as Record<string, unknown>).__findRuns as number) ?? 0) + 1; // diagnostic; the e2e asserts it
+      }
+      curFind = findMemo?.result ?? null;
     }
     if (curTransition) paintTransition(curTransition);
     else if (curFind) paintFind(curFind);
