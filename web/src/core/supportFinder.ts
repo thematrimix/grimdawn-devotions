@@ -1,6 +1,5 @@
-// ABOUTME: Find: the cheapest supporting build for a selection that does not cover its own affinity.
-// ABOUTME: Fewest added stars (whole supporting constellations plus finished partials), tie-broken toward
-// ABOUTME: stars carrying the user's tagged benefits, and returned only with an oracle-verified build order.
+// ABOUTME: Find's support search: the cheapest covering build over a base selection (fewest added stars,
+// ABOUTME: tagged tie-break, verified order), plus the acceptance and verification helpers the modes share.
 import { starValuesGranting, starValuesGrantingPet } from "./aggregate";
 import { parseTag } from "./benefitTag";
 import { gateBuildOrder, type StepState } from "./orderLegality";
@@ -24,20 +23,20 @@ import {
 } from "./reachability";
 import type { DevotionModel, StarId } from "./types";
 
-// Work caps, counted in DFS nodes (never wall-clock) so the result is a pure function of
-// (selection, cap, tags) and a shared link recomputes the identical suggestion.
+// Work caps, counted in DFS nodes (never wall-clock) so the result is a pure function of its inputs and a
+// shared link recomputes the identical suggestion.
 const COST_NODE_CAP = 400_000; // phase 1: prove the fewest added stars
 const TIE_NODE_CAP = 200_000; // phase 2: enumerate equal-cost alternatives for the tie-break
 const MAX_TIES = 256; // equal-cost candidates kept for ranking
 const MAX_VERIFY = 8; // candidates replayed through the real build-order path
-// The covering-node acceptance: the ladder gate, else the peak witness WITH seeded shuffles (the
-// classify path's count). The per-click resolver runs the witness without shuffles to stay cheap and
-// WASM-equivalent; Find runs once per click of its button and replays every suggestion through the
-// oracle, so it can afford to accept the cap-tight builds only a shuffled order fits.
+// The covering-node acceptance: the ladder gate, else the peak witness WITH seeded shuffles (the classify
+// path's count). The per-click resolver runs the witness without shuffles to stay cheap and WASM-equivalent;
+// Find runs on demand and replays every suggestion through the oracle, so it can afford the cap-tight builds
+// only a shuffled order fits.
 const WITNESS_TRIES = 32;
 const WITNESS_NODE_CAP = 3000;
-// The panel's live build order (selectionView) uses 32 tries; Find verifies with the same call so an
-// applied suggestion shows the very order previewed.
+// The panel's live build order (selectionView) uses 32 tries; Find verifies with the same call so an applied
+// suggestion shows the very order previewed.
 const ORDER_TRIES = 32;
 
 export interface FindFound {
@@ -55,6 +54,12 @@ export interface FindFound {
 }
 export type FindResult = FindFound | { kind: "none" };
 
+export interface VerifiedOrder {
+  order: BuildStep[];
+  states: StepState[];
+  peak: number;
+}
+
 interface Candidate {
   chosen: ReachCon[];
   finished: string[];
@@ -68,7 +73,7 @@ const ratio = (c: ReachCon): number => (c.grant[0] + c.grant[1] + c.grant[2] + c
 const byId = (a: { id: string }, b: { id: string }): number => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /** The stars carrying any tagged player or pet benefit (affinity tags are constellation-level and skipped). */
-function taggedStars(model: DevotionModel, tags: Iterable<string>): Set<StarId> {
+export function taggedStars(model: DevotionModel, tags: Iterable<string>): Set<StarId> {
   const out = new Set<StarId>();
   for (const s of tags) {
     const tag = parseTag(s);
@@ -90,6 +95,116 @@ function deficitOf(target: Vec, build: Vec): Vec {
   ];
 }
 
+/** selectionSummary in canonical order: a decoded link and a sequence of clicks need not share iteration order. */
+function canonicalSummary(model: DevotionModel, selected: Set<StarId>): ReachState {
+  const st = selectionSummary(model, selected);
+  return { ...st, built: [...st.built].sort(byId), partialFinish: [...st.partialFinish].sort(byId) };
+}
+
+/** The base's committed members, with the chosen partial finishes at full size and grant. */
+function baseMembers(st: ReachState, finished: Set<string>): ReachCon[] {
+  const pf = new Map(st.partialFinish.map((p) => [p.id, p]));
+  return st.built.map((b) => {
+    const p = pf.get(b.id);
+    return p && finished.has(b.id) ? { ...b, grant: p.grant, size: b.size + p.remaining } : b;
+  });
+}
+
+/** The ladder gate, else the shuffled peak witness: the build fits the cap by some legal construction. */
+export function acceptsBuild(cons: ReachCon[], table: CoverTable, members: ReachCon[], cap: number): boolean {
+  return (
+    peakGateReachable(cons, members, cap) ||
+    minPeakSampled(cons, table, members, cap, WITNESS_TRIES, WITNESS_NODE_CAP) <= cap
+  );
+}
+
+/** The panel's own order for these members at this cap, only when the independent oracle proves it legal. */
+export function verifiedOrder(
+  cons: ReachCon[],
+  table: CoverTable,
+  members: ReachCon[],
+  cap: number,
+): VerifiedOrder | null {
+  const gated = gateBuildOrder(cons, members, buildOrderPath(cons, table, members, cap, ORDER_TRIES), cap);
+  if (!gated) return null;
+  let peak = 0;
+  for (const s of gated.steps) peak = Math.max(peak, s.heldAfter);
+  return { order: gated.steps, states: gated.states, peak };
+}
+
+/**
+ * Every covering build over `st`: for each subset of partial finishes, a cover-table-pruned DFS over
+ * `filler` (include first). `over(bound)` prunes a node whose added-star bound is out of reach; a covering
+ * node is reported (unless `over` its cost) and its supersets pruned, since more filler only adds stars
+ * and cannot lower the peak. Returns true when `nodeCap` stopped the walk early.
+ */
+function walkCovering(
+  st: ReachState,
+  table: CoverTable,
+  cap: number,
+  filler: ReachCon[],
+  nodeCap: number,
+  over: (bound: number) => boolean,
+  onCovering: (chosen: ReachCon[], finished: string[], added: number, members: ReachCon[]) => void,
+): boolean {
+  let nodes = 0;
+  let capHit = false;
+  const chosen: ReachCon[] = [];
+  let finished: string[] = [];
+  let builtCons: ReachCon[] = [];
+  function rec(i: number, build: Vec, added: number, maxReq: Vec): void {
+    if (capHit) return;
+    if (++nodes > nodeCap) {
+      capHit = true;
+      return;
+    }
+    if (covers(build, maxReq)) {
+      if (!over(added)) onCovering(chosen, finished, added, [...builtCons, ...chosen]);
+      return;
+    }
+    if (i >= filler.length) return;
+    const cov = coverCostAt(table, deficitOf(maxV(maxReq, st.target), build));
+    if (cov >= INF || over(added + cov)) return;
+    const c = filler[i]!;
+    if (st.own + added + c.size <= cap) {
+      chosen.push(c);
+      rec(i + 1, addCap(build, c.grant), added + c.size, maxV(maxReq, c.req));
+      chosen.pop();
+    }
+    rec(i + 1, build, added, maxReq);
+  }
+  const pf = st.partialFinish;
+  for (let mask = 0; mask < 1 << pf.length; mask++) {
+    let build: Vec = [...st.supply];
+    let added = 0;
+    const fin = new Set<string>();
+    for (let j = 0; j < pf.length; j++)
+      if (mask & (1 << j)) {
+        build = addCap(build, pf[j]!.grant);
+        added += pf[j]!.remaining;
+        fin.add(pf[j]!.id);
+      }
+    if (st.own + added > cap) continue;
+    finished = [...fin];
+    builtCons = baseMembers(st, fin);
+    chosen.length = 0;
+    rec(0, build, added, st.target);
+    if (capHit) break;
+  }
+  return capHit;
+}
+
+/** The base plus every star of the chosen constellations and of the finished partials. */
+function starsOf(model: DevotionModel, base: Set<StarId>, chosen: ReachCon[], finished: string[]): Set<StarId> {
+  const stars = new Set<StarId>(base);
+  for (const id of [...chosen.map((c) => c.id), ...finished])
+    for (const sid of model.constellations.get(id)?.starIds ?? []) stars.add(sid);
+  return stars;
+}
+
+const keyOf = (chosen: ReachCon[], finished: string[]): string =>
+  [...chosen.map((c) => c.id), ...finished.map((id) => `${id}#finish`)].sort().join(",");
+
 /**
  * The cheapest supporting build for `selected` within `cap`: the fewest added stars that make it a
  * self-covering build with a construction peak at or under the cap, preferring (among equal costs) the
@@ -104,14 +219,7 @@ export function findSupport(
   cap: number,
   benefitTags: Iterable<string>,
 ): FindResult {
-  const st0 = selectionSummary(model, selected);
-  // Canonical order: selectionSummary follows the selection's iteration order, which a decoded link
-  // and a sequence of clicks need not share.
-  const st: ReachState = {
-    ...st0,
-    built: [...st0.built].sort(byId),
-    partialFinish: [...st0.partialFinish].sort(byId),
-  };
+  const st = canonicalSummary(model, selected);
   const tagged = taggedStars(model, benefitTags);
   const scoreOf = (conId: string): number => {
     let n = 0;
@@ -123,138 +231,87 @@ export function findSupport(
     .filter((c) => !st.startedIds.has(c.id) && hasGrant(c))
     .sort((a, b) => ratio(b) - ratio(a) || byId(a, b));
   for (const c of filler) conScore.set(c.id, scoreOf(c.id));
-  const pf = st.partialFinish;
-  for (const p of pf) conScore.set(p.id, scoreOf(p.id));
-  const remainingById = new Map(pf.map((p) => [p.id, p.remaining]));
-  const grantById = new Map(pf.map((p) => [p.id, p.grant]));
-
-  const membersFor = (chosen: ReachCon[], finished: Set<string>): ReachCon[] => [
-    ...st.built.map((b) =>
-      finished.has(b.id) ? { ...b, grant: grantById.get(b.id)!, size: b.size + remainingById.get(b.id)! } : b,
-    ),
-    ...chosen,
-  ];
-  const accepts = (members: ReachCon[]): boolean =>
-    peakGateReachable(cons, members, cap) ||
-    minPeakSampled(cons, table, members, cap, WITNESS_TRIES, WITNESS_NODE_CAP) <= cap;
+  for (const p of st.partialFinish) conScore.set(p.id, scoreOf(p.id));
   const candidateOf = (chosen: ReachCon[], finished: string[], added: number): Candidate => {
     let score = 0;
     for (const c of chosen) score += conScore.get(c.id)!;
     for (const id of finished) score += conScore.get(id)!;
-    const ids = [...chosen.map((c) => c.id), ...finished.map((id) => `${id}#finish`)].sort();
-    return { chosen: [...chosen].sort(byId), finished: [...finished].sort(), added, score, key: ids.join(",") };
+    return {
+      chosen: [...chosen].sort(byId),
+      finished: [...finished].sort(),
+      added,
+      score,
+      key: keyOf(chosen, finished),
+    };
   };
+  const membersFor = (c: Candidate): ReachCon[] => [...baseMembers(st, new Set(c.finished)), ...c.chosen];
 
-  // One DFS over whole-constellation filler for every subset of partial finishes, as the exact resolver
-  // does (docs/reachability-engine.md). `strict` keeps nodes whose bound EQUALS the limit (phase 2's
-  // tie enumeration); otherwise only strictly cheaper builds are pursued (phase 1). A covering node is
-  // decided and its supersets pruned: more filler can only add stars, and cannot lower the peak.
-  let limit = cap - st.own;
-  let nodes = 0;
-  let nodeCap = 0;
-  let capHit = false;
-  let ties: Candidate[] = [];
-  function search(strict: boolean, onAccept: (c: Candidate) => void): void {
-    nodes = 0;
-    capHit = false;
-    const chosen: ReachCon[] = [];
-    let finished: string[] = [];
-    let builtCons: ReachCon[] = [];
-    const over = (bound: number): boolean => (strict ? bound > limit : bound >= limit);
-    function rec(i: number, build: Vec, added: number, maxReq: Vec): void {
-      if (capHit) return;
-      if (++nodes > nodeCap) {
-        capHit = true;
-        return;
-      }
-      if (covers(build, maxReq)) {
-        if (!over(added) && accepts([...builtCons, ...chosen])) onAccept(candidateOf(chosen, finished, added));
-        return;
-      }
-      if (i >= filler.length) return;
-      const cov = coverCostAt(table, deficitOf(maxV(maxReq, st.target), build));
-      if (cov >= INF || over(added + cov)) return;
-      const c = filler[i]!;
-      if (st.own + added + c.size <= cap) {
-        chosen.push(c);
-        rec(i + 1, addCap(build, c.grant), added + c.size, maxV(maxReq, c.req));
-        chosen.pop();
-      }
-      rec(i + 1, build, added, maxReq);
-    }
-    for (let mask = 0; mask < 1 << pf.length; mask++) {
-      let build: Vec = [...st.supply];
-      let added = 0;
-      const fin = new Set<string>();
-      for (let j = 0; j < pf.length; j++)
-        if (mask & (1 << j)) {
-          build = addCap(build, pf[j]!.grant);
-          added += pf[j]!.remaining;
-          fin.add(pf[j]!.id);
-        }
-      if (st.own + added > cap) continue;
-      finished = [...fin];
-      builtCons = membersFor([], fin);
-      chosen.length = 0;
-      rec(0, build, added, st.target);
-      if (capHit) return;
-    }
-  }
-
-  // Phase 1: the fewest added stars. Each accepted build tightens the limit, so the search only ever
-  // pursues strictly cheaper builds afterward.
+  // Phase 1: the fewest added stars. Each accepted build tightens the limit, so only strictly cheaper
+  // builds are pursued afterward.
   let best: Candidate | null = null;
-  nodeCap = COST_NODE_CAP;
-  limit = cap - st.own + 1;
-  search(false, (c) => {
-    best = c;
-    limit = c.added;
-  });
-  const costProven = !capHit;
-  // Phase 2: every accepted build at exactly that cost, for the benefit tie-break.
+  let limit = cap - st.own + 1;
+  const costProven = !walkCovering(
+    st,
+    table,
+    cap,
+    filler,
+    COST_NODE_CAP,
+    (b) => b >= limit,
+    (chosen, finished, added, members) => {
+      if (!acceptsBuild(cons, table, members, cap)) return;
+      best = candidateOf(chosen, finished, added);
+      limit = added;
+    },
+  );
+  // Phase 2: every accepted build at exactly that cost, for the benefit tie-break. Only a capped phase 1
+  // can leave a cheaper build for this pass to meet; it becomes the cost.
   let tiesExhausted = false;
+  let ties: Candidate[] = [];
   if (best) {
     limit = (best as Candidate).added;
-    nodeCap = TIE_NODE_CAP;
     const seen = new Set<string>();
-    search(true, (c) => {
-      // Only a capped phase 1 can leave a cheaper build for this pass to meet: it becomes the cost.
-      if (c.added < limit) {
-        limit = c.added;
-        ties = [];
-      }
-      if (c.added !== limit || seen.has(c.key)) return;
-      seen.add(c.key);
-      ties.push(c);
-      if (ties.length > MAX_TIES * 2) ties = rank(ties).slice(0, MAX_TIES);
-    });
-    tiesExhausted = !capHit;
+    tiesExhausted = !walkCovering(
+      st,
+      table,
+      cap,
+      filler,
+      TIE_NODE_CAP,
+      (b) => b > limit,
+      (chosen, finished, added, members) => {
+        if (!acceptsBuild(cons, table, members, cap)) return;
+        if (added < limit) {
+          limit = added;
+          ties = [];
+        }
+        const c = candidateOf(chosen, finished, added);
+        if (c.added !== limit || seen.has(c.key)) return;
+        seen.add(c.key);
+        ties.push(c);
+        if (ties.length > MAX_TIES * 2) ties = rank(ties).slice(0, MAX_TIES);
+      },
+    );
     if (!ties.length) ties = [best];
   }
 
-  // Verify through the real path, in rank order: the first score group with any verified order wins,
-  // and within it the lowest peak. Greedy's own build is the last resort, so a selection the engine
-  // lights never comes back empty-handed.
-  const ranked = rank(ties);
-  let winner: { c: Candidate; order: BuildStep[]; states: StepState[]; peak: number } | null = null;
-  for (const c of ranked.slice(0, MAX_VERIFY)) {
+  // Verify through the real path, in rank order: the first score group with any verified order wins, and
+  // within it the lowest peak. Greedy's own build is the last resort, so a selection the engine lights
+  // never comes back empty-handed.
+  let winner: ({ c: Candidate } & VerifiedOrder) | null = null;
+  for (const c of rank(ties).slice(0, MAX_VERIFY)) {
     if (winner && (c.added !== winner.c.added || c.score !== winner.c.score)) break;
-    const v = verify(c);
+    const v = verifiedOrder(cons, table, membersFor(c), cap);
     if (v && (!winner || v.peak < winner.peak)) winner = { c, ...v };
   }
   if (!winner) {
     const g = greedyCandidate();
-    const v = g ? verify(g) : null;
+    const v = g ? verifiedOrder(cons, table, membersFor(g), cap) : null;
     if (g && v) winner = { c: g, ...v };
   }
   if (!winner) return { kind: "none" };
   const w: Candidate = winner.c;
-  const stars = new Set<StarId>(selected);
-  for (const id of [...w.chosen.map((c) => c.id), ...w.finished])
-    for (const sid of model.constellations.get(id)?.starIds ?? []) stars.add(sid);
   return {
     kind: "found",
-    stars,
+    stars: starsOf(model, selected, w.chosen, w.finished),
     added: w.chosen.map((c) => c.id),
     finished: w.finished,
     addedStars: w.added,
@@ -265,15 +322,6 @@ export function findSupport(
     order: winner.order,
     states: winner.states,
   };
-
-  function verify(c: Candidate): { order: BuildStep[]; states: StepState[]; peak: number } | null {
-    const members = membersFor(c.chosen, new Set(c.finished));
-    const gated = gateBuildOrder(cons, members, buildOrderPath(cons, table, members, cap, ORDER_TRIES), cap);
-    if (!gated) return null;
-    let peak = 0;
-    for (const s of gated.steps) peak = Math.max(peak, s.heldAfter);
-    return { order: gated.steps, states: gated.states, peak };
-  }
 
   function greedyCandidate(): Candidate | null {
     if (greedyFrom(cons, st, cap) >= INF) return null;

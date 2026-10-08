@@ -10,7 +10,7 @@ import {
   selectionSummary,
   type ReachCon,
 } from "../src/core/reachability";
-import { findSupport, type FindFound } from "../src/core/supportFinder";
+import { acceptsBuild, findSupport, taggedStars, verifiedOrder, type FindFound } from "../src/core/supportFinder";
 import { gateBuildOrder, verifyBuildOrder } from "../src/core/orderLegality";
 import { buildModel } from "../src/core/model";
 import type { DevotionModel, StarId } from "../src/core/types";
@@ -215,4 +215,16 @@ describe("findSupport over the reachable-builds corpus", () => {
     }
     expect(checked).toBeGreaterThan(20);
   }, 120_000);
+});
+
+describe("shared verification", () => {
+  test("verifiedOrder returns an oracle-legal order exactly when the gate passes", () => {
+    const r = found(findSupport(model, cons, table, whole(model, "oleron"), 55, []));
+    const members = membersOf(model, r.stars);
+    expect(acceptsBuild(cons, table, members, 55)).toBe(true);
+    const v = verifiedOrder(cons, table, members, 55)!;
+    expect(verifyBuildOrder(cons, members, v.order, 55)).toBeNull();
+    expect(v.peak).toBe(r.peak);
+    expect(verifiedOrder(cons, table, members, members.reduce((n, m) => n + m.size, 0) - 1)).toBeNull();
+  });
 });
