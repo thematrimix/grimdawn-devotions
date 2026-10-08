@@ -225,27 +225,17 @@ Pointers: the touch block at the end of `web/e2e/smoke.ts` (the
 
 ## Guided build order: remaining follow-ups
 
-- Supporting-set suggester (the principled Oleron fix): for a not-self-covering
-  selection, suggest the cheapest supporting constellations that complete it and
-  order the whole build, turning "Incomplete build" into actionable guidance. A
-  spike proved this viable: an exact min-stars knapsack DP over the affinity
-  deficit (the capped affinity space is only ~917k states, so it is tractable,
-  not NP-hard at our scale) gives optimal support sets when correct (Oleron ->
-  +24 support, 31-point total, matching the engine `minCost` floor; same for
-  Light of Empyrion, Ultos, Tsunami). TWO real problems to solve first: (1) the
-  deficit-DP ignores that a support constellation has its OWN affinity
-  requirement, so it undercounts when support needs support (Ulo, Blind Sage,
-  Crab, Hydra came in below the engine floor) - make it self-consistent
-  (iterate: add support, fold in its requirement, re-solve) or extract the
-  witness from the engine's own `minCost` machinery, which already computes the
-  correct total. (2) reconcile a discrepancy the spike surfaced: for Ulo the
-  deficit-DP says 9, `selectionMinCost` says 11, AND `buildOrderPath` returned an
-  order for the 9-point set - those three must agree; investigate whether the
-  9-point final state is genuinely self-covering (minCost loose) or not
-  (buildOrderPath returning an order for a non-self-covering final state would be
-  a real bug). Also decide cheapest-vs-"productive" support (a player wants
-  support that grants stats they want, not just minimal stars - a heuristic layer
-  on the feasibility DP). This needs its own brainstorm/spec/plan.
+- Find follow-ups (Find shipped: see docs/reachability-engine.md "Find: the supporting-build
+  suggester"). Deferred:
+  - "Productive" support: spend leftover points on tagged attributes instead of only using them
+    to break ties between equal-cost builds. This needs a scoring model (star count versus stat
+    magnitude, multiple tags) and its own brainstorm.
+  - Highlight the suggested stars on the map while the preview is open (a ghost class in
+    `svgRenderer`, fed from `curFind` in `main.ts`).
+  - Move the search to a Web Worker if a selection ever measures slow. Today the max is about
+    300 ms on the TS path. This would share the worker entry with the background-search item
+    below.
+  - Translate the `ui.buildOrder.find*` keys. They fall back to English today.
 - Tier 3 (bounded exact verify): port `minPeakCost` (branch
   `reachability-costed-scaffolding`, vendored in
   `web/scripts/reachability-realmap-hunt.ts` and

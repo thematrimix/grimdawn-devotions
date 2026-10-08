@@ -324,6 +324,45 @@ divergence counter covering both the synthetic corpus and the real one), and
 the offline harness `just build-order-validate`, whose illegal-path count
 must stay zero.
 
+## Find: the supporting-build suggester
+
+A selection that does not cover its own affinity has no build order; the panel says what it is
+short. The Find button beside the Build Order heading answers "what is the cheapest way to finish
+it?" with `findSupport` (web/src/core/supportFinder.ts), shown as a preview the user applies or
+dismisses.
+
+- **Objective.** Fewest **added stars**: whole supporting constellations plus the remaining stars
+  of any partially-taken constellation it chooses to finish. The construction peak is a constraint
+  (at or under the cap), not the objective, and it is a different number: Ulo alone finishes at 9
+  stars but peaks at 13 while its scaffolding is held, which is what `selectionMinCost` reports.
+  The preview shows both.
+- **Tie-break.** Among equal-cost builds, the most added stars carrying a tagged player or pet
+  benefit (affinity tags do not score), then the lowest peak, then canonical ids. Leftover points
+  stay unspent.
+- **Search.** The exact resolver's shape (every subset of partial finishes, then a cover-table-pruned
+  DFS over whole granting constellations, covering supersets pruned) run in two phases: phase 1
+  pursues only strictly cheaper builds to prove the minimum, phase 2 enumerates every accepted build
+  at exactly that cost for the tie-break. A covering node is accepted by the ladder gate or the peak
+  witness with seeded shuffles (the classify path's count, not the resolver's zero): Find runs once
+  per click of its button, so it can afford the cap-tight builds only a shuffled order fits. Both
+  phases are capped by node counts, never wall-clock, so the suggestion is a pure function of
+  (selection, cap, tags); a capped phase 1 is labeled "best found", never "cheapest".
+- **Verified or absent.** Candidates are replayed in rank order through the panel's own path
+  (`buildOrderPath` at 32 tries, then `gateBuildOrder`), and greedy's own build (`lastGreedyFiller`)
+  is the last resort, so a suggestion always carries the oracle-legal order the panel shows once it
+  is applied.
+- **URL.** The preview is `fd=1` in the hash and is recomputed on load. A selection or cap change
+  drops it; a tag change recomputes it.
+- **Engine untouched.** Find only reads exported engine helpers; no classify or resolver verdict
+  depends on it, so nothing is mirrored in Rust.
+
+Measured on every incomplete selection made by dropping one granting member from a
+reachable-builds fixture (962 selections, TS resolver): all get a verified suggestion with a proven
+minimum, median 17 ms, p95 87 ms, max about 300 ms. web/test/support-finder.test.ts pins it:
+brute-force optimality and tie-break on synthetic models, the named real cases (Oleron +24 for a
+31-point build), determinism, partial finishes, and a corpus sample (the full corpus under
+`just test-slow`).
+
 ## Investigating a reported build
 
 A user report usually arrives as a share link ("it shows 54 used but will not let me
