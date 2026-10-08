@@ -60,3 +60,6 @@ export interface SelectionState {
   selected: Set<StarId>;
   pointCap: number;
 }
+
+/** What Find optimizes: fewest added stars, that plus a tagged-attribute fill, or most tagged stars. */
+export type FindMode = "cheapest" | "fill" | "attributes";

@@ -366,3 +366,40 @@ test("no preview emits no fd= and an absent fd= decodes to false", () => {
 test("a malformed fd= means no preview", () => {
   for (const v of ["0", "true", "", "11", "%31x"]) expect(decodeHash(`p=55&fd=${v}`, canonical, [])!.find).toBe(false);
 });
+
+test("the Find mode round-trips as fm=; cheapest emits nothing", () => {
+  for (const [mode, param] of [
+    ["fill", "fm=1"],
+    ["attributes", "fm=2"],
+  ] as const) {
+    const h = encodeHash(new Set(), 55, canonical, new Set(), [], null, "", "", false, null, mode);
+    expect(h).toContain(param);
+    expect(decodeHash(h, canonical, [])!.findMode).toBe(mode);
+  }
+  expect(encodeHash(new Set(), 55, canonical, new Set(), [], null, "", "", false, null, "cheapest")).not.toContain(
+    "fm=",
+  );
+  for (const v of ["", "0", "3", "x"]) expect(decodeHash(`p=55&fm=${v}`, canonical, [])!.findMode).toBe("cheapest");
+});
+
+test("the Find core round-trips as fc= only when it differs from the selection", () => {
+  const sel = new Set(["bat:0", "bat:1", "crossroads_chaos:0"]);
+  const core = new Set(["bat:0", "bat:1"]);
+  const h = encodeHash(sel, 55, canonical, new Set(), [], null, "", "", false, core);
+  expect(h).toContain("fc=");
+  expect([...decodeHash(h, canonical, [])!.findCore!].sort()).toEqual(["bat:0", "bat:1"]);
+  expect(encodeHash(sel, 55, canonical, new Set(), [], null, "", "", false, new Set(sel))).not.toContain("fc=");
+  expect(decodeHash("p=55&s=AA", canonical, [])!.findCore).toBeNull();
+});
+
+test("a stale fc= is clamped into the selection; empty or equal decodes as no core", () => {
+  const sel = new Set(["bat:0", "bat:1"]);
+  const s = encodeHash(sel, 55, canonical).match(/s=([^&]*)/)![1];
+  const fcWide = encodeHash(new Set(["bat:0", "crossroads_chaos:0"]), 55, canonical).match(/s=([^&]*)/)![1];
+  const d = decodeHash(`p=55&s=${s}&fc=${fcWide}`, canonical, [])!;
+  expect([...d.findCore!]).toEqual(["bat:0"]);
+  const fcOutside = encodeHash(new Set(["crossroads_chaos:0"]), 55, canonical).match(/s=([^&]*)/)![1];
+  expect(decodeHash(`p=55&s=${s}&fc=${fcOutside}`, canonical, [])!.findCore).toBeNull();
+  expect(decodeHash(`p=55&s=${s}&fc=${s}`, canonical, [])!.findCore).toBeNull();
+  expect(decodeHash(`p=55&s=${s}&fc=!!`, canonical, [])!.findCore).toBeNull();
+});
