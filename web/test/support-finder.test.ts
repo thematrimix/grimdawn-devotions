@@ -10,7 +10,7 @@ import {
   selectionSummary,
   type ReachCon,
 } from "../src/core/reachability";
-import { acceptsBuild, findSupport, taggedStars, verifiedOrder, type FindFound } from "../src/core/supportFinder";
+import { acceptsBuild, findSupport, verifiedOrder, type FindFound } from "../src/core/supportFinder";
 import { gateBuildOrder, verifyBuildOrder } from "../src/core/orderLegality";
 import { buildModel } from "../src/core/model";
 import type { DevotionModel, StarId } from "../src/core/types";

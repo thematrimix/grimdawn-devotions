@@ -98,7 +98,7 @@ test("brute force: max tagged, then fewest stars, on random small models", () =>
     const { cons: rc } = randModel(rng);
     const tagged = new Set(rc.filter(() => rng() < 0.4).map((c) => c.id));
     const m = modelOf(rc, tagged);
-    const pick = rc.filter((c) => rng() < 0.4);
+    const pick = rc.filter(() => rng() < 0.4);
     const base = new Set(pick.flatMap((c) => m.constellations.get(c.id)!.starIds));
     const cap = 1 + Math.floor(rng() * 7);
     const truth = bruteFill(m, rc, base, cap, T(m));
