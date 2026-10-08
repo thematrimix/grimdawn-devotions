@@ -225,16 +225,18 @@ Pointers: the touch block at the end of `web/e2e/smoke.ts` (the
 
 ## Guided build order: remaining follow-ups
 
-- Find follow-ups (Find shipped: see docs/reachability-engine.md "Find: the supporting-build
-  suggester"). Deferred:
-  - "Productive" support: spend leftover points on tagged attributes instead of only using them
-    to break ties between equal-cost builds. This needs a scoring model (star count versus stat
-    magnitude, multiple tags) and its own brainstorm.
+- Find follow-ups (Find and its modes shipped: see docs/reachability-engine.md "Find"). Deferred:
+  - Weight attribute matches (stat magnitude, or covering every tagged attribute at least once) if
+    true-OR counting proves too coarse: `fillTagged` scores options per star; a weight map from
+    `taggedStars` would slot in there.
+  - Most attributes is greedy (one blocked constellation per round, 6 tries, 3 rounds). A build that
+    needs two blocked constellations together to pay off is missed; pairs, or a bound-driven search,
+    would close that at a time cost.
   - Highlight the suggested stars on the map while the preview is open (a ghost class in
     `svgRenderer`, fed from `curFind` in `main.ts`).
-  - Move the search to a Web Worker if a selection ever measures slow. Today the max is about
-    300 ms on the TS path. This would share the worker entry with the background-search item
-    below.
+  - Move the search to a Web Worker: Most attributes takes about 1 s on large tagged selections and
+    the open preview recomputes on every change. This would share the worker entry with the
+    background-search item below.
   - Translate the `ui.buildOrder.find*` keys. They fall back to English today.
 - Tier 3 (bounded exact verify): port `minPeakCost` (branch
   `reachability-costed-scaffolding`, vendored in
