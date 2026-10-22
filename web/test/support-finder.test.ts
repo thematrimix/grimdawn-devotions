@@ -182,6 +182,66 @@ describe("findSupport on synthetic models", () => {
   }, 120_000);
 });
 
+describe("findSupport with an avoid set", () => {
+  const z = [0, 0, 0, 0, 0] as ReachCon["req"];
+  const rc: ReachCon[] = [
+    { id: "need", size: 2, req: [3, 0, 0, 0, 0], grant: z },
+    { id: "a", size: 3, req: [1, 0, 0, 0, 0], grant: [4, 0, 0, 0, 0] },
+    { id: "b", size: 3, req: [1, 0, 0, 0, 0], grant: [4, 0, 0, 0, 0] },
+    ...[0, 1, 2, 3, 4].map((i) => ({
+      id: `x${i}`,
+      size: 1,
+      req: z,
+      grant: z.map((_, k) => (k === i ? 1 : 0)) as ReachCon["req"],
+    })),
+  ];
+  const m = modelOf(rc);
+  const t = buildCoverTable(rc);
+  const sel = whole(m, "need");
+
+  test("an avoided supporter is never added; the next best is used", () => {
+    expect(found(findSupport(m, rc, t, sel, 10, [])).added).toEqual(["a"]);
+    const r = found(findSupport(m, rc, t, sel, 10, [], new Set(["a"])));
+    expect(r.added).toEqual(["b"]);
+  });
+
+  test("no supporter left once every route is avoided", () => {
+    expect(findSupport(m, rc, t, sel, 10, [], new Set(["a", "b"])).kind).toBe("none");
+  });
+
+  test("an empty avoid set matches the default", () => {
+    const a = found(findSupport(m, rc, t, sel, 10, []));
+    const b = found(findSupport(m, rc, t, sel, 10, [], new Set()));
+    expect([...b.stars].sort()).toEqual([...a.stars].sort());
+  });
+
+  test("an avoided constellation may still be refunded scaffolding", () => {
+    // Behemoth's cheapest build stands up Rat as temporary scaffolding. Avoiding Rat bars it from the
+    // final build only; the order may keep using it, and refunds it.
+    const sel0 = whole(model, "behemoth");
+    const base = found(findSupport(model, cons, table, sel0, 55, []));
+    expect(base.order.some((st) => st.kind === "scaffold-add" && st.conId === "rat")).toBe(true);
+    const r = found(findSupport(model, cons, table, sel0, 55, [], new Set(["rat"])));
+    for (const sid of model.constellations.get("rat")!.starIds) expect(r.stars.has(sid)).toBe(false);
+    expect(r.order.some((st) => st.kind === "scaffold-add" && st.conId === "rat")).toBe(true);
+    expect(r.order.some((st) => st.kind === "scaffold-refund" && st.conId === "rat")).toBe(true);
+    expect(verifyBuildOrder(cons, membersOf(model, r.stars), r.order, 55)).toBeNull();
+  });
+
+  test("a partly taken avoided constellation is not finished and the user's stars stay", () => {
+    const anvil = model.constellations.get("anvil")!.starIds;
+    const base = new Set<StarId>([anvil[0]!, anvil[1]!, ...whole(model, "oleron")]);
+    expect(found(findSupport(model, cons, table, base, 55, [])).finished).toContain("anvil");
+    const r = findSupport(model, cons, table, base, 55, [], new Set(["anvil"]));
+    if (r.kind === "found") {
+      expect(r.finished).not.toContain("anvil");
+      for (const s of base) expect(r.stars.has(s)).toBe(true);
+      for (const s of anvil.slice(2)) expect(r.stars.has(s)).toBe(false);
+      expect(verifyBuildOrder(cons, membersOf(model, r.stars), r.order, 55)).toBeNull();
+    }
+  });
+});
+
 describe("findSupport over the reachable-builds corpus", () => {
   // Drop each granting member from a reachable build to make an incomplete selection the engine still
   // lights at the auto-raised cap; Find must never come back empty-handed for one.

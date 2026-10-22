@@ -218,8 +218,12 @@ export function findSupport(
   selected: Set<StarId>,
   cap: number,
   benefitTags: Iterable<string>,
+  avoid: ReadonlySet<string> = new Set(),
 ): FindResult {
-  const st = canonicalSummary(model, selected);
+  const full = canonicalSummary(model, selected);
+  // An avoided constellation may be refunded scaffolding in the order, but no added star of it stays in the
+  // build: it is neither filler nor a partial to finish. The user's own stars of it are already in the base.
+  const st: ReachState = { ...full, partialFinish: full.partialFinish.filter((p) => !avoid.has(p.id)) };
   const tagged = taggedStars(model, benefitTags);
   const scoreOf = (conId: string): number => {
     let n = 0;
@@ -228,7 +232,7 @@ export function findSupport(
   };
   const conScore = new Map<string, number>();
   const filler = cons
-    .filter((c) => !st.startedIds.has(c.id) && hasGrant(c))
+    .filter((c) => !st.startedIds.has(c.id) && !avoid.has(c.id) && hasGrant(c))
     .sort((a, b) => ratio(b) - ratio(a) || byId(a, b));
   for (const c of filler) conScore.set(c.id, scoreOf(c.id));
   for (const p of st.partialFinish) conScore.set(p.id, scoreOf(p.id));
@@ -304,7 +308,10 @@ export function findSupport(
   }
   if (!winner) {
     const g = greedyCandidate();
-    const v = g ? verifiedOrder(cons, table, membersFor(g), cap) : null;
+    const v =
+      g && !g.chosen.some((c) => avoid.has(c.id)) && !g.finished.some((id) => avoid.has(id))
+        ? verifiedOrder(cons, table, membersFor(g), cap)
+        : null;
     if (g && v) winner = { c: g, ...v };
   }
   if (!winner) return { kind: "none" };
