@@ -449,10 +449,16 @@ describe("av= avoided constellations", () => {
   });
 
   test("junk is dropped, duplicates collapse, and the list is capped", () => {
-    const many = Array.from({ length: 200 }, (_, i) => `c${i}`).join(",");
+    const many = Array.from({ length: 400 }, (_, i) => `c${i}`).join(",");
     const junk = decodeHash(`#p=55&av=bat,,BAT,bat,%00x,a b,${"z".repeat(80)},rat`, canonical)!.avoided;
     expect(junk).toEqual(["bat", "rat"]);
-    expect(decodeHash(`#av=${many}`, canonical)!.avoided).toHaveLength(64);
+    expect(decodeHash(`#av=${many}`, canonical)!.avoided).toHaveLength(256);
+  });
+
+  test("every constellation can be avoided and survives a copied link", () => {
+    const all = new Set(model.constellations.keys());
+    expect(all.size).toBeGreaterThan(64);
+    expect(new Set(decodeHash(`#${enc(all)}`, canonical)!.avoided)).toEqual(all);
   });
 
   test("av alone is enough to decode, and does not touch the selection", () => {

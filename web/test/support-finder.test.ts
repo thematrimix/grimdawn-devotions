@@ -232,13 +232,11 @@ describe("findSupport with an avoid set", () => {
     const anvil = model.constellations.get("anvil")!.starIds;
     const base = new Set<StarId>([anvil[0]!, anvil[1]!, ...whole(model, "oleron")]);
     expect(found(findSupport(model, cons, table, base, 55, [])).finished).toContain("anvil");
-    const r = findSupport(model, cons, table, base, 55, [], new Set(["anvil"]));
-    if (r.kind === "found") {
-      expect(r.finished).not.toContain("anvil");
-      for (const s of base) expect(r.stars.has(s)).toBe(true);
-      for (const s of anvil.slice(2)) expect(r.stars.has(s)).toBe(false);
-      expect(verifyBuildOrder(cons, membersOf(model, r.stars), r.order, 55)).toBeNull();
-    }
+    const r = found(findSupport(model, cons, table, base, 55, [], new Set(["anvil"])));
+    expect(r.finished).not.toContain("anvil");
+    for (const s of base) expect(r.stars.has(s)).toBe(true);
+    for (const s of anvil.slice(2)) expect(r.stars.has(s)).toBe(false);
+    expect(verifyBuildOrder(cons, membersOf(model, r.stars), r.order, 55)).toBeNull();
   });
 });
 

@@ -10,7 +10,7 @@ const MAX_CAP = 55;
 const MAX_QUERY = 100; // a shared link carries a search box's worth of text, not a document
 
 /** Every param decodeHash understands. Presence of any one makes a hash ours to decode. */
-const MAX_AVOIDED = 64;
+const MAX_AVOIDED = 256; // well above the constellation count: a copied link must restore every avoid
 const KNOWN_PARAMS = ["p", "s", "b", "q", "cs", "cp", "gt", "fd", "fc", "fm", "av"] as const;
 
 /**
