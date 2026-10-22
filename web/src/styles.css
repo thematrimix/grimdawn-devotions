@@ -1257,6 +1257,18 @@ body.comparing main {
   pointer-events: none;
 }
 
+/* An avoided constellation's badge: a crossed-out circle over its top-left corner. */
+.avoid-badge circle {
+  fill: rgba(20, 20, 28, 0.85);
+  stroke: #ff7a6b;
+  stroke-width: 3;
+}
+.avoid-badge path {
+  fill: none;
+  stroke: #ff7a6b;
+  stroke-width: 3;
+}
+
 /* --- Narrow layout: overlay drawers + corner toggles (body.narrow set by JS via matchMedia) --- */
 .drawer-toggle {
   display: none;

@@ -136,6 +136,7 @@ const REQUIRED = [
   "ui.buildOrder.findTagged",
   "ui.buildOrder.findApply",
   "ui.buildOrder.findDismiss",
+  "ui.avoid.badge",
   "ui.buildOrder.findNone",
   "ui.buildOrder.findModeLabel",
   "ui.buildOrder.findMode.cheapest",

@@ -121,6 +121,7 @@
   "ui.buildOrder.findTagged": "Added stars carrying your tagged attributes: {count}.",
   "ui.buildOrder.findApply": "Apply",
   "ui.buildOrder.findDismiss": "Dismiss",
+  "ui.avoid.badge": "Avoided by Find: right-click to allow",
   "ui.buildOrder.findNone": "No supporting build fits within your point cap.",
   "ui.buildOrder.findModeLabel": "Find optimizes for",
   "ui.buildOrder.findMode.cheapest": "Cheapest",

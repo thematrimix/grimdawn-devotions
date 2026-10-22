@@ -126,6 +126,8 @@ function arcMarkup(cx: number, cy: number, baseR: number, marks: readonly StarMa
   return `<g class="search-arcs">${track}${arcs.join("")}</g>`;
 }
 
+const escapeText = (t: string): string => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 export interface RenderOpts {
   manifest: AssetManifest | null;
   // Per-star search marks: each matched star maps to the marks (fixed angle + color style, the
@@ -146,6 +148,9 @@ export interface RenderOpts {
   // and glow via the search-glow halo in the query's mark color. Star-level query matches arrive
   // as `marks` entries instead (a constellation hit glows the art, not its stars).
   conHighlight?: Set<string>;
+  // Constellations the user marked to avoid in Find: each gets a badge (title = avoidLabel, already localized).
+  avoided?: ReadonlySet<string>;
+  avoidLabel?: string;
 }
 
 // A constellation's hover/click footprint in SVG world coords: its art bounds
@@ -488,6 +493,18 @@ export function renderSvgMarkup(model: DevotionModel, state: SelectionState, opt
     );
   }
 
+  // Layer 4: avoid badges, over the stars at each avoided constellation's top-left star corner.
+  for (const id of opts.avoided ?? []) {
+    const stars = (model.constellations.get(id)?.starIds ?? []).map((sid) => model.stars.get(sid)!);
+    if (!stars.length) continue;
+    const bx = Math.min(...stars.map((s) => s.position.x)) + STAR_CENTER - CON_PAD;
+    const by = Math.min(...stars.map((s) => s.position.y)) + STAR_CENTER - CON_PAD;
+    parts.push(
+      `<g class="avoid-badge" data-con-id="${id}" pointer-events="none"><title>${escapeText(opts.avoidLabel ?? "")}</title>` +
+        `<circle cx="${bx}" cy="${by}" r="14"/><path d="M${bx - 9} ${by + 9}L${bx + 9} ${by - 9}"/></g>`,
+    );
+  }
+
   const pts = [...model.stars.values()].map((s) => ({ x: s.position.x + STAR_CENTER, y: s.position.y + STAR_CENTER }));
   const vb = toViewBoxString(fitViewBox(pts, 60));
   return `<svg id="map" viewBox="${vb}" preserveAspectRatio="xMidYMid meet"><defs>${defs.join("")}</defs>${parts.join("")}</svg>`;
@@ -501,6 +518,9 @@ export interface UpdateOpts {
   diff?: { added: Set<StarId>; removed: Set<StarId> } | null;
   affinityFilter?: { grants: Set<Affinity>; requires: Set<Affinity> };
   conHighlight?: Set<string>;
+  // Constellations the user marked to avoid in Find: each gets a badge (title = avoidLabel, already localized).
+  avoided?: ReadonlySet<string>;
+  avoidLabel?: string;
 }
 
 export interface SvgHandle {
@@ -522,6 +542,8 @@ export interface SvgDeps {
   manifest: AssetManifest | null;
   onStarClick(id: StarId, clientX: number, clientY: number): void;
   onConstellationClick(id: string, clientX: number, clientY: number): void;
+  // Right-click on a constellation or one of its stars (the browser menu is suppressed only then).
+  onConstellationContext(id: string): void;
   onHover(target: HoverTarget, clientX: number, clientY: number): void;
 }
 
@@ -555,6 +577,14 @@ export function mountSvg(container: HTMLElement, model: DevotionModel, deps: Svg
     }
     const cid = conAt(me.clientX, me.clientY);
     if (cid) deps.onConstellationClick(cid, me.clientX, me.clientY);
+  });
+  container.addEventListener("contextmenu", (e) => {
+    const me = e as MouseEvent;
+    const sid = (e.target as Element)?.getAttribute?.("data-star-id");
+    const cid = sid ? model.stars.get(sid)?.constellationId : conAt(me.clientX, me.clientY);
+    if (!cid) return;
+    e.preventDefault();
+    deps.onConstellationContext(cid);
   });
   // No hover on touch devices: a tap synthesizes a single mousemove at the tap point, which would
   // otherwise paint the passive (no-commit) hover tooltip over whatever the dismissing tap landed on.

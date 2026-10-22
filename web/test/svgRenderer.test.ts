@@ -513,3 +513,16 @@ test("a matched constellation muted by an affinity filter still gets its halo, w
     ),
   );
 });
+
+test("an avoided constellation gets a labelled badge; none without the option", () => {
+  const state = { selected: new Set<string>(), pointCap: 55 };
+  const withBadge = renderSvgMarkup(model, state, {
+    manifest: null,
+    avoided: new Set(["bat"]),
+    avoidLabel: "Avoided by Find",
+  });
+  expect(withBadge.match(/class="avoid-badge"/g)).toHaveLength(1);
+  expect(withBadge).toContain('data-con-id="bat"');
+  expect(withBadge).toContain("<title>Avoided by Find</title>");
+  expect(renderSvgMarkup(model, state, { manifest: null })).not.toContain("avoid-badge");
+});
