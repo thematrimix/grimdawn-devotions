@@ -25,6 +25,12 @@ show from game data differs from what grimtools displays, treat grimtools as the
 source of truth: find why, adopt its convention unless the game itself proves it
 wrong, and pin the result with a fixture of grimtools' displayed values.
 
+## Game updates
+
+After a Grim Dawn patch, follow [docs/game-update.md](docs/game-update.md): it is
+the single runbook for regenerating every dataset (`just migrate`,
+`just migrate-grimtools`) and the review steps around them.
+
 ## Backlog / new ideas
 
 New ideas and backlog items go in [BACKLOG.md](BACKLOG.md) at the project root.
@@ -52,8 +58,11 @@ client state that only lives in memory or the DOM. The canonical id lists behind
 the bitsets are append-only: never remove or reorder an id, since its bit position
 is the wire format. Retire a tag by adding it to `deprecatedBenefitIds` in
 `urlState.ts` so it keeps its position, decodes as absent, and leaves the catalog.
-`web/test/fixtures/url-wire-ids.json` pins the published star and benefit id order;
-when a data refresh appends ids, add them to the end of that fixture.
+`data/url-wire-ids.json` is the published star and benefit id order. The benefit
+order is read from it at runtime: a published id the game data no longer produces
+keeps its bit and is deprecated automatically, and an id the data adds is appended.
+When a data refresh adds ids, append them to the end of that file (the pin test in
+`web/test/urlState.test.ts` fails until you do).
 
 ## Internationalization (invariant we maintain)
 
