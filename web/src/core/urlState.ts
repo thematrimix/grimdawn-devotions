@@ -10,7 +10,8 @@ const MAX_CAP = 55;
 const MAX_QUERY = 100; // a shared link carries a search box's worth of text, not a document
 
 /** Every param decodeHash understands. Presence of any one makes a hash ours to decode. */
-const KNOWN_PARAMS = ["p", "s", "b", "q", "cs", "cp", "gt", "fd", "fc", "fm"] as const;
+const MAX_AVOIDED = 64;
+const KNOWN_PARAMS = ["p", "s", "b", "q", "cs", "cp", "gt", "fd", "fc", "fm", "av"] as const;
 
 /**
  * A point-cap param (`p=` live, `cp=` baseline). Absent, empty, or unparseable all mean the full
@@ -212,6 +213,7 @@ export function encodeHash(
   find = false,
   findCore: Set<StarId> | null = null,
   findMode: FindMode = "cheapest",
+  avoided: ReadonlySet<string> = new Set(),
 ): string {
   // p=0 is the uncapped sentinel (0 is otherwise an invalid cap; the real min is 1).
   const cap = Number.isFinite(pointCap) ? pointCap : 0;
@@ -236,6 +238,8 @@ export function encodeHash(
     out += `&fc=${encodeBitset(findCore, canonical)}`;
   if (findMode === "fill") out += "&fm=1";
   else if (findMode === "attributes") out += "&fm=2";
+  // Constellations Find must not leave in its build; plain ids (short, and there is no published wire order).
+  if (avoided.size > 0) out += `&av=${[...avoided].sort().join(",")}`;
   return out;
 }
 
@@ -255,6 +259,7 @@ export function decodeHash(
   find: boolean;
   findCore: Set<StarId> | null;
   findMode: FindMode;
+  avoided: string[];
 } | null {
   const raw = hash.replace(/^#/, "").trim();
   if (!raw) return null;
@@ -295,5 +300,12 @@ export function decodeHash(
   const fm = params.get("fm");
   const findMode: FindMode = fm === "1" ? "fill" : fm === "2" ? "attributes" : "cheapest";
 
-  return { selected, pointCap, benefits, baseline, query, source, find, findCore, findMode };
+  // Ids only: the planner keeps the ones that name a real constellation. Capped so a hostile link stays small.
+  const avoided: string[] = [];
+  for (const id of (params.get("av") ?? "").split(",")) {
+    if (avoided.length >= MAX_AVOIDED) break;
+    if (/^[a-z0-9_]{1,64}$/.test(id) && !avoided.includes(id)) avoided.push(id);
+  }
+
+  return { selected, pointCap, benefits, baseline, query, source, find, findCore, findMode, avoided };
 }

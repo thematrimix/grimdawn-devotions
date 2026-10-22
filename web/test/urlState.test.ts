@@ -431,3 +431,33 @@ test("a benefit id the game added is appended after every published id", () => {
   // 248 ids were published before 1.3.1.1; Run Speed for pets is new in it.
   expect(canonicalBenefitIds(model).indexOf("pet:characterRunSpeedModifier")).toBeGreaterThanOrEqual(248);
 });
+
+describe("av= avoided constellations", () => {
+  const enc = (avoided: Set<string>) =>
+    encodeHash(new Set(), 55, canonical, new Set(), [], null, "", "", false, null, "cheapest", avoided);
+
+  test("round trips, sorted", () => {
+    const hash = enc(new Set(["rat", "bat"]));
+    expect(hash).toContain("&av=bat,rat");
+    expect(decodeHash(`#${hash}`, canonical)!.avoided).toEqual(["bat", "rat"]);
+  });
+
+  test("an empty set leaves the hash exactly as before", () => {
+    expect(enc(new Set())).toBe(encodeHash(new Set(), 55, canonical));
+    expect(enc(new Set())).not.toContain("av=");
+    expect(decodeHash("#p=55&s=", canonical)!.avoided).toEqual([]);
+  });
+
+  test("junk is dropped, duplicates collapse, and the list is capped", () => {
+    const many = Array.from({ length: 200 }, (_, i) => `c${i}`).join(",");
+    const junk = decodeHash(`#p=55&av=bat,,BAT,bat,%00x,a b,${"z".repeat(80)},rat`, canonical)!.avoided;
+    expect(junk).toEqual(["bat", "rat"]);
+    expect(decodeHash(`#av=${many}`, canonical)!.avoided).toHaveLength(64);
+  });
+
+  test("av alone is enough to decode, and does not touch the selection", () => {
+    const d = decodeHash("#av=bat", canonical)!;
+    expect(d.avoided).toEqual(["bat"]);
+    expect(d.selected.size).toBe(0);
+  });
+});
