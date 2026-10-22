@@ -168,6 +168,12 @@ export function findPreviewHtml(
 ): string {
   const head = headingHtml(loc, { enabled: false, reason: "previewing", mode });
   const dismiss = `<button type="button" class="bo-find-dismiss">${loc.translate("ui.buildOrder.findDismiss")}</button>`;
+  if (outcome.kind === "blocked") {
+    const names = outcome.avoided
+      .map((id) => esc(stepConName(loc, model, id)))
+      .join(loc.translate("ui.buildOrder.deficitJoin"));
+    return `${head}<div class="bo-empty"><div class="bo-empty-msg">${loc.translate("ui.buildOrder.findBlocked", { names })}</div></div><div class="bo-find-actions">${dismiss}</div>`;
+  }
   if (outcome.kind === "none")
     return `${head}<div class="bo-empty"><div class="bo-empty-msg">${loc.translate("ui.buildOrder.findNone")}</div></div><div class="bo-find-actions">${dismiss}</div>`;
   const dropped = new Set(outcome.dropped);

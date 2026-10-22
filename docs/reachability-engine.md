@@ -347,6 +347,18 @@ cap, outside compare mode. A mode selector beside it picks the objective. While 
   held at once, scaffolding included) are different numbers: Ulo alone finishes at 9 stars but peaks
   at 13, which is what `selectionMinCost` reports. The peak must fit the cap; the preview shows both.
 
+- **Avoided constellations (`av=`).** Right-clicking a constellation toggles an avoid mark (a badge on
+  the map; the id list rides in the URL as `av=`, unknown ids are dropped at restore). The set is an
+  optional trailing argument to `findBuild`, `findSupport` and `fillTagged`. It bars an avoided
+  constellation from the final build only: it is neither filler nor a partial finish, and not a fill
+  or Most-attributes candidate. The user's own stars of it stay base selection. Scaffolding is not
+  restricted: the order engine draws scaffolds from every constellation, so an avoided one may be
+  stood up and refunded as long as none of its added stars remain. Avoids never touch per-click
+  reachability, dimming or the build-order oracle. When the avoid-constrained run fails or has to
+  drop core constellations but the avoid-free run does neither and adds stars of an avoided
+  constellation, `findBuild` returns `{ kind: "blocked", avoided }` (the preview names them);
+  otherwise a failure stays the plain "does not fit your point cap" `none`.
+
 ### Modes (`fm=`)
 
 - **Cheapest** (default). The fewest added stars, then the most tagged stars, the lowest peak and
@@ -411,7 +423,7 @@ The tests: `support-finder.test.ts` (Cheapest: brute-force optimality and tie-br
 models, Oleron +24 for a 31-point build, the Ulo size/peak split, partial finishes, determinism, a
 corpus sample), `find-fill.test.ts` (the fill against brute force, branching predecessors),
 `find-build.test.ts` (the modes, true OR, dropping, the no-tag and zero-capacity edges),
-`find-core.test.ts` and `urlState.test.ts` (the core and `fc=`/`fm=`/`fd=`), and the Find block of
+`find-core.test.ts` and `urlState.test.ts` (the core and `fc=`/`fm=`/`fd=`/`av=`), and the Find block of
 `web/e2e/smoke.ts`.
 
 ## Investigating a reported build

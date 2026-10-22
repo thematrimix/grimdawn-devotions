@@ -1255,3 +1255,11 @@ see them).
 
 Pointers: `web/src/core/urlState.ts` (`canonicalStarIds`, `decodeHash`),
 `web/src/app/main.ts` (`applyHash`), `data/url-wire-ids.json`.
+
+## Avoid a constellation from touch (and keyboard)
+
+Avoiding a constellation for Find is right-click only (`onConstellationContext` in
+`web/src/adapters/svgRenderer.ts`), so touch and keyboard users cannot set it. Idea: add an
+"Avoid for Find" action to the touch commit popover (`showCommitPopover` in `web/src/app/main.ts`)
+and a long-press, plus a keyboard path. The state side is done: `avoided` in `main.ts` and `av=` in
+`web/src/core/urlState.ts`.

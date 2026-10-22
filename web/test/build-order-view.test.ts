@@ -172,3 +172,23 @@ test("findPreviewHtml: a dropped-only result is not 'already optimal'", () => {
   expect(html).not.toContain("bo-find-optimal");
   expect(html).not.toMatch(/class="bo-find-apply" disabled/);
 });
+
+test("findPreviewHtml blocked: names the avoided constellations, no Apply, not the cap message", () => {
+  const sel = new Set(model.constellations.get("oleron")!.starIds);
+  const html = findPreviewHtml(
+    enLoc,
+    model,
+    null,
+    { kind: "blocked", avoided: ["hammer", "crane"] },
+    sel,
+    55,
+    "cheapest",
+    false,
+  );
+  expect(html).toContain(enLoc.gameText(model.constellations.get("hammer")!.nameTag));
+  expect(html).toContain(enLoc.gameText(model.constellations.get("crane")!.nameTag));
+  expect(html).toContain("marked to avoid");
+  expect(html).not.toContain("fits within your point cap");
+  expect(html).toContain("bo-find-dismiss");
+  expect(html).not.toContain("bo-find-apply");
+});

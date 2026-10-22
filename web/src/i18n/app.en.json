@@ -122,6 +122,7 @@
   "ui.buildOrder.findApply": "Apply",
   "ui.buildOrder.findDismiss": "Dismiss",
   "ui.avoid.badge": "Avoided by Find: right-click to allow",
+  "ui.buildOrder.findBlocked": "Blocked: reaching this needs {names}, which you marked to avoid. Unmark it or pick it yourself.",
   "ui.buildOrder.findNone": "No supporting build fits within your point cap.",
   "ui.buildOrder.findModeLabel": "Find optimizes for",
   "ui.buildOrder.findMode.cheapest": "Cheapest",

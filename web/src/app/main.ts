@@ -155,6 +155,8 @@ async function boot() {
   let findCore: Set<StarId> | null = null;
   let coreBase = new Set<StarId>();
   let findMode: FindMode = "cheapest";
+  // Constellations Find must not leave in its build (av=); toggled by right-click, never restricts manual picks.
+  let avoided = new Set<string>();
   let findMemo: { key: string; result: FindOutcome } | null = null;
   let curFind: FindOutcome | null = null;
   // Decode and repair a hash into planner state. Runs at boot and on every hashchange
@@ -181,6 +183,7 @@ async function boot() {
     findCore = restored?.findCore ?? null;
     coreBase = new Set(state.selected);
     findMode = restored?.findMode ?? "cheapest";
+    avoided = new Set((restored?.avoided ?? []).filter((id) => model.constellations.has(id)));
   }
   applyHash(location.hash);
   // The full benefit catalog (every subject + its stat ids), so the panel can list benefits the
@@ -443,6 +446,10 @@ async function boot() {
         state = next;
         refresh();
       }
+    },
+    onConstellationContext: (id) => {
+      if (!avoided.delete(id)) avoided.add(id);
+      refresh();
     },
     onConstellationClick: (id, x, y) => {
       if (isTouch()) {
@@ -921,6 +928,8 @@ async function boot() {
       diff,
       affinityFilter: affinityFilterSets(),
       conHighlight: searchMatch.constellations,
+      avoided,
+      avoidLabel: localization.translate("ui.avoid.badge"),
     });
   }
   // The match count line; null (an empty box) clears it rather than showing "no matches".
@@ -933,7 +942,7 @@ async function boot() {
   }
   // The hash, written by both render paths. Search uses "replace" so typing never floods history.
   function writeHash(urlMode: "push" | "replace") {
-    const next = `#${encodeHash(state.selected, state.pointCap, canonical, selectedBenefits, benefitCanonical, baseline, query, source, findOpen, findCore, findMode)}`;
+    const next = `#${encodeHash(state.selected, state.pointCap, canonical, selectedBenefits, benefitCanonical, baseline, query, source, findOpen, findCore, findMode, avoided)}`;
     // Only touch history when the hash actually changed: no-op refreshes (language switch,
     // popover re-renders) must create no entry and leave the current one alone.
     if (next === location.hash) return;
@@ -1042,11 +1051,14 @@ async function boot() {
     if (findOpen && table) {
       const core = findCore ?? state.selected;
       const tags = [...selectedBenefits].sort();
-      const memoKey = `${selectionKey(core)}|${state.pointCap}|${tags.join(",")}|${findMode}`;
+      const memoKey = `${selectionKey(core)}|${state.pointCap}|${tags.join(",")}|${findMode}|${[...avoided].sort().join(",")}`;
       // A cap drag holds the previous preview until release (onBarUp recomputes once): the search can
       // take a second in Most attributes, and every pointermove is a refresh.
       if (findMemo?.key !== memoKey && !dragging) {
-        findMemo = { key: memoKey, result: findBuild(model, cons, table, core, state.pointCap, tags, findMode) };
+        findMemo = {
+          key: memoKey,
+          result: findBuild(model, cons, table, core, state.pointCap, tags, findMode, avoided),
+        };
         (globalThis as Record<string, unknown>).__findRuns =
           (((globalThis as Record<string, unknown>).__findRuns as number) ?? 0) + 1; // diagnostic; the e2e asserts it
       }
