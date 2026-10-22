@@ -198,3 +198,80 @@ test("selectionDelta reports a same-count swap inside one constellation as a gai
   const d = selectionDelta(model, new Set([w[0]!, w[3]!]), new Set([w[0]!, w[2]!]));
   expect(d).toEqual([{ conId: "wraith", from: 2, to: 2, total: w.length, gained: 1, lost: 1 }]);
 });
+
+describe("findBuild with an avoid set", () => {
+  const z = [0, 0, 0, 0, 0] as ReachCon["req"];
+  const gainedIn = (m: DevotionModel, p: FindPlan, core: Set<StarId>, avoid: Set<string>) =>
+    [...p.stars].filter((s) => !core.has(s) && avoid.has(m.stars.get(s)!.constellationId));
+
+  for (const mode of ["cheapest", "fill", "attributes"] as const) {
+    test(`${mode}: no plan leaves an added star of an avoided constellation`, () => {
+      const core = whole(model, "oleron");
+      const free = plan(findBuild(model, cons, table, core, 55, OR_TAGS, mode));
+      const avoid = new Set(
+        [...free.stars].filter((s) => !core.has(s)).map((s) => model.stars.get(s)!.constellationId),
+      );
+      expect(avoid.size).toBeGreaterThan(0);
+      const r = findBuild(model, cons, table, core, 55, OR_TAGS, mode, avoid);
+      if (r.kind === "found") {
+        expect(gainedIn(model, r, core, avoid)).toEqual([]);
+        legal(model, cons, r, 55);
+      } else {
+        expect(r.kind).toBe("blocked");
+      }
+    });
+  }
+
+  const rc: ReachCon[] = [
+    { id: "need", size: 2, req: [3, 0, 0, 0, 0], grant: z },
+    { id: "a", size: 3, req: [1, 0, 0, 0, 0], grant: [4, 0, 0, 0, 0] },
+    { id: "b", size: 3, req: [1, 0, 0, 0, 0], grant: [4, 0, 0, 0, 0] },
+    ...[0, 1, 2, 3, 4].map((i) => ({
+      id: `x${i}`,
+      size: 1,
+      req: z,
+      grant: z.map((_, k) => (k === i ? 1 : 0)) as ReachCon["req"],
+    })),
+  ];
+  const m = modelOf(rc);
+  const t = buildCoverTable(rc);
+  const need = whole(m, "need");
+
+  test("an avoid with an alternative is just a different plan", () => {
+    const r = plan(findBuild(m, rc, t, need, 10, [], "cheapest", new Set(["a"])));
+    expect(gainedIn(m, r, need, new Set(["a"]))).toEqual([]);
+    expect(r.stars.has("b:0")).toBe(true);
+  });
+
+  test("blocked names the avoided constellations the avoid-free plan used", () => {
+    expect(findBuild(m, rc, t, need, 10, [], "cheapest", new Set(["a", "b"]))).toEqual({
+      kind: "blocked",
+      avoided: ["a"],
+    });
+  });
+
+  test("over the cap even without avoids is none, not blocked", () => {
+    expect(findBuild(m, rc, t, need, 3, [], "cheapest", new Set(["a", "b"]))).toEqual({ kind: "none" });
+  });
+
+  test("an avoid the free plan never used is none, not blocked", () => {
+    expect(findBuild(m, rc, t, need, 3, [], "cheapest", new Set(["x0"]))).toEqual({ kind: "none" });
+  });
+
+  test("blocked beats silently dropping a core constellation", () => {
+    const rc2: ReachCon[] = [
+      ...rc,
+      { id: "need2", size: 1, req: [3, 0, 0, 0, 0], grant: z },
+      { id: "big", size: 3, req: z, grant: z },
+    ];
+    const m2 = modelOf(rc2);
+    const core = new Set<StarId>([...whole(m2, "need2"), ...whole(m2, "big")]);
+    const t2 = buildCoverTable(rc2);
+    const free = plan(findBuild(m2, rc2, t2, core, 10, [], "cheapest"));
+    expect(free.dropped).toEqual([]);
+    expect(findBuild(m2, rc2, t2, core, 10, [], "cheapest", new Set(["a", "b"]))).toEqual({
+      kind: "blocked",
+      avoided: ["a"],
+    });
+  });
+});

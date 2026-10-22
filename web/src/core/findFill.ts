@@ -29,6 +29,7 @@ export function fillTagged(
   base: Set<StarId>,
   capacity: number,
   tagged: Set<StarId>,
+  avoid: ReadonlySet<string> = new Set(),
 ): FillResult {
   const none: FillResult = { stars: new Set(base), added: 0, tagged: 0 };
   if (capacity <= 0 || tagged.size === 0) return none;
@@ -38,7 +39,7 @@ export function fillTagged(
   for (const con of model.constellations.values()) {
     const req = reqById.get(con.id);
     const free = con.starIds.filter((s) => !base.has(s));
-    if (!req || free.length === 0 || !covers(supply, req)) continue;
+    if (avoid.has(con.id) || !req || free.length === 0 || !covers(supply, req)) continue;
     if (!free.some((s) => tagged.has(s))) continue;
     // Best tagged count per size over predecessor-closed subsets (ascending mask order: deterministic).
     const bySize = new Map<number, Option>();

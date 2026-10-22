@@ -27,7 +27,12 @@ export interface FindPlan {
   order: BuildStep[];
   states: StepState[];
 }
-export type FindOutcome = FindPlan | { kind: "none" };
+/** No plan fits only because constellations the user marked to avoid are needed; `avoided` names them. */
+export interface FindBlocked {
+  kind: "blocked";
+  avoided: string[]; // canonical id order
+}
+export type FindOutcome = FindPlan | { kind: "none" } | FindBlocked;
 
 export interface ConDelta {
   conId: string;
@@ -40,7 +45,11 @@ export interface ConDelta {
 
 type Draft = Omit<FindPlan, "kind" | "core" | "dropped">;
 
-/** The best build for `mode` over the core within `cap` (see docs/reachability-engine.md, "Find"). */
+/**
+ * The best build for `mode` over the core within `cap` (see docs/reachability-engine.md, "Find"). Avoided
+ * constellations are never added to the final build. When that alone is what stops a plan (the avoid-free run
+ * is strictly better on dropped core constellations and adds avoided stars), the outcome is "blocked".
+ */
 export function findBuild(
   model: DevotionModel,
   cons: ReachCon[],
@@ -49,7 +58,28 @@ export function findBuild(
   cap: number,
   tags: Iterable<string>,
   mode: FindMode,
+  avoid: ReadonlySet<string> = new Set(),
 ): FindOutcome {
+  const a = runFind(model, cons, table, core, cap, tags, mode, avoid);
+  if (avoid.size === 0 || (a.kind === "found" && a.dropped.length === 0)) return a;
+  const b = runFind(model, cons, table, core, cap, tags, mode, new Set());
+  if (b.kind !== "found" || b.dropped.length >= (a.kind === "found" ? a.dropped.length : Infinity)) return a;
+  const used = new Set<string>();
+  for (const s of b.stars) if (!b.core.has(s)) used.add(model.stars.get(s)!.constellationId);
+  const avoided = [...used].filter((id) => avoid.has(id)).sort();
+  return avoided.length ? { kind: "blocked", avoided } : a;
+}
+
+function runFind(
+  model: DevotionModel,
+  cons: ReachCon[],
+  table: CoverTable,
+  core: Set<StarId>,
+  cap: number,
+  tags: Iterable<string>,
+  mode: FindMode,
+  avoid: ReadonlySet<string>,
+): FindPlan | { kind: "none" } {
   if (!Number.isFinite(cap) || core.size === 0) return { kind: "none" };
   const tagList = [...tags];
   const tagged = taggedStars(model, tagList);
@@ -82,7 +112,7 @@ export function findBuild(
     };
   }
   function cheapest(base: Set<StarId>): Draft | null {
-    const r = findSupport(model, cons, table, base, cap, tagList);
+    const r = findSupport(model, cons, table, base, cap, tagList, avoid);
     if (r.kind !== "found") return null;
     return draftOf(base, r.stars, r, r.costProven && r.tiesExhausted, "cheapest");
   }
@@ -90,7 +120,7 @@ export function findBuild(
   function filled(built: Set<StarId>): { stars: Set<StarId>; v: VerifiedOrder } | null {
     let capacity = cap - built.size;
     for (let attempt = 0; attempt < FILL_RETRIES && capacity > 0; attempt++) {
-      const f = fillTagged(model, cons, built, capacity, tagged);
+      const f = fillTagged(model, cons, built, capacity, tagged, avoid);
       if (f.added === 0) return null;
       const v = verifiedOrder(cons, table, selectionSummary(model, f.stars).built, cap);
       if (v) return { stars: f.stars, v };
@@ -181,7 +211,7 @@ export function findBuild(
     const out: { id: string; add: StarId[]; tagged: number }[] = [];
     for (const con of model.constellations.values()) {
       const req = reqById.get(con.id);
-      if (!req || covers(supply, req)) continue;
+      if (avoid.has(con.id) || !req || covers(supply, req)) continue;
       const want = con.starIds.filter((s) => tagged.has(s) && !stars.has(s));
       if (!want.length) continue;
       // The tagged stars plus their predecessors: the closed set a player must take to reach them.

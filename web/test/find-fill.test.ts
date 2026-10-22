@@ -123,3 +123,15 @@ test("real map: every filled star's predecessors are in the result", () => {
   for (const s of r.stars) for (const p of model.stars.get(s)!.predecessors) expect(r.stars.has(p)).toBe(true);
   expect(r.added).toBeLessThanOrEqual(12);
 });
+
+test("an avoided constellation is skipped as fill", () => {
+  const rc: ReachCon[] = [
+    { id: "base", size: 1, req: z, grant: [3, 0, 0, 0, 0] },
+    { id: "a", size: 2, req: [1, 0, 0, 0, 0], grant: z },
+    { id: "b", size: 2, req: [1, 0, 0, 0, 0], grant: z },
+  ];
+  const m = modelOf(rc, new Set(["a", "b"]));
+  const base = new Set<StarId>(["base:0"]);
+  const r = fillTagged(m, rc, base, 2, T(m), new Set(["a"]));
+  expect([...r.stars].sort()).toEqual(["b:0", "b:1", "base:0"]);
+});
